@@ -3,79 +3,120 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>WhatsApp Group Broadcaster</title>
+    <title>WhatsApp Broadcaster - Claro Brasil</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <style>
+      body {
+        font-family: 'Inter', sans-serif;
+        background-color: #f7f7f7;
+      }
+
+      .claro-gradient {
+        background: linear-gradient(135deg, #E60000 0%, #9b0000 100%);
+      }
+
+      .card {
+        background: #fff;
+        border-radius: 1rem;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+        transition: all 0.2s ease-in-out;
+      }
+
+      .card:hover {
+        transform: translateY(-1px);
+      }
+
+      .header-logo {
+        color: #E60000;
+        font-weight: 800;
+        font-size: 1.8rem;
+        letter-spacing: -0.5px;
+      }
+
+      .reply-indicator {
+        background: #f2f2f2;
+        border-left: 4px solid #E60000;
+        padding: 6px 8px;
+        margin-bottom: 6px;
+        font-size: 0.85rem;
+        font-style: italic;
+      }
+
+      .scrollbar-thin::-webkit-scrollbar {
+        width: 5px;
+      }
+      .scrollbar-thin::-webkit-scrollbar-thumb {
+        background: #ccc;
+        border-radius: 4px;
+      }
+    </style>
   </head>
 
-  <body class="bg-slate-50 text-slate-900">
-    <div class="max-w-6xl mx-auto p-4">
-      <h1 class="text-2xl font-bold mb-4">WhatsApp Group Broadcaster</h1>
+  <body class="text-slate-900">
+    <div class="max-w-7xl mx-auto p-6">
+      <header class="flex items-center justify-between mb-6">
+        <div class="header-logo">WhatsApp Broadcaster</div>
+        <div class="text-sm text-gray-600 font-medium">Powered by <span class="text-[#E60000] font-bold">Claro Brasil</span></div>
+      </header>
 
-      <!-- Login via QR -->
-      <div class="grid md:grid-cols-2 gap-6 mb-6">
-        <div class="p-4 bg-white rounded-xl shadow">
-          <h2 class="font-semibold mb-2">1) Login via QR</h2>
-          <p class="text-sm text-slate-600 mb-2">
-            Escaneie o QR com o WhatsApp para conectar.
-          </p>
-          <div
-            id="qr"
-            class="aspect-square bg-slate-100 flex items-center justify-center rounded-lg"
-          >
-            <span class="text-slate-500 text-sm">Aguardando QR...</span>
+      <!-- Painéis principais -->
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+
+        <!-- Login QR -->
+        <div id="qr-card" class="card p-5 col-span-1 lg:col-span-1 flex flex-col justify-between">
+          <div>
+            <h2 class="text-lg font-semibold text-[#E60000] mb-2 flex items-center gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-[#E60000]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582a2 2 0 011.93 1.518l1.731 6.924A2 2 0 0010.182 19H19v-5h-.582a2 2 0 01-1.93-1.518l-1.731-6.924A2 2 0 0013.818 5H5V4h-.418z"/></svg>
+              Login via QR
+            </h2>
+            <p class="text-sm text-gray-600 mb-3">Escaneie o QR Code com seu WhatsApp para conectar.</p>
+            <div id="qr" class="bg-gray-100 flex items-center justify-center rounded-lg aspect-square overflow-hidden">
+              <span class="text-gray-500 text-sm">Aguardando QR...</span>
+            </div>
+            <p id="wa-status" class="mt-2 text-sm text-gray-600"></p>
           </div>
-          <p id="wa-status" class="mt-2 text-sm"></p>
         </div>
 
-        <!-- Envio -->
-        <div class="p-4 bg-white rounded-xl shadow">
-          <h2 class="font-semibold mb-2">3) Enviar mensagem</h2>
-          <textarea
-            id="message"
-            class="w-full border rounded-lg p-2 h-28"
-            placeholder="Escreva sua mensagem..."
-          ></textarea>
-          <button
-            id="send"
-            class="mt-2 px-4 py-2 rounded-lg bg-emerald-600 text-white disabled:opacity-50"
-          >
+        <!-- Grupos -->
+        <div class="card p-5 flex flex-col">
+          <h2 class="text-lg font-semibold text-[#E60000] mb-2">Selecionar grupos</h2>
+          <div id="groups" class="space-y-2 max-h-[480px] overflow-auto scrollbar-thin"></div>
+        </div>
+
+        <!-- Enviar mensagem -->
+        <div class="card p-5 flex flex-col">
+          <h2 class="text-lg font-semibold text-[#E60000] mb-2">Enviar mensagem</h2>
+          <textarea id="message" class="w-full border rounded-lg p-3 h-28 focus:ring-2 focus:ring-[#E60000] focus:border-[#E60000] outline-none text-gray-800" placeholder="Digite sua mensagem..."></textarea>
+          <button id="send" class="mt-3 px-4 py-2 rounded-lg claro-gradient text-white font-semibold hover:opacity-90 transition-all disabled:opacity-50">
             Enviar para grupos selecionados
           </button>
-          <p class="text-xs text-slate-500 mt-1">
-            Dica: selecione os grupos na seção ao lado antes de enviar.
-          </p>
+          <p class="text-xs text-gray-500 mt-1">Selecione os grupos antes de enviar.</p>
         </div>
       </div>
 
-      <!-- Seleção de grupos & Chats -->
-      <div class="grid md:grid-cols-2 gap-6">
-        <div class="p-4 bg-white rounded-xl shadow">
-          <h2 class="font-semibold mb-2">2) Selecionar grupos</h2>
-          <div
-            id="groups"
-            class="space-y-2 max-h-[480px] overflow-auto"
-          ></div>
-        </div>
-
-        <div class="p-4 bg-white rounded-xl shadow">
-          <h2 class="font-semibold mb-2">4) Monitoramento</h2>
-          <div
-            id="chats"
-            class="space-y-4 max-h-[480px] overflow-auto"
-          ></div>
-        </div>
+      <!-- Monitoramento -->
+      <div class="card p-5 mt-6">
+        <h2 class="text-lg font-semibold text-[#E60000] mb-3">Monitoramento</h2>
+        <div id="chats" class="space-y-4 max-h-[500px] overflow-auto scrollbar-thin"></div>
       </div>
 
-      <footer class="text-xs text-slate-500 mt-8">
-        Feito com Baileys + Socket.IO. Mantenha seu celular conectado ao WhatsApp.
+      <footer class="text-xs text-gray-500 mt-8 text-center">
+        Sistema interno desenvolvido com Baileys + Socket.IO • Claro Brasil © 2025
       </footer>
     </div>
 
-    <!-- Configuração da URL do backend e script principal -->
     <script>
-      window.BACKEND_URL = "https://whatsapp-group-broadcaster.onrender.com";
+      window.BACKEND_URL = 'https://whatsapp-group-broadcaster.onrender.com';
+
+      // Esconde o QR após conexão
+      const socket = io(window.BACKEND_URL);
+      socket.on('ready', () => {
+        const qrCard = document.getElementById('qr-card');
+        if (qrCard) qrCard.classList.add('hidden');
+      });
     </script>
-    <script src="app.js"></script>
+
+    <script src="./app.js"></script>
   </body>
 </html>
