@@ -1,11 +1,12 @@
-// backend/index.js
+// backend/index.js - VERSÃO DEBUG PARA INVESTIGAR QUOTED
 import express from 'express'
 import http from 'http'
 import { Server } from 'socket.io'
 import makeWASocket, { 
   useMultiFileAuthState, 
   DisconnectReason,
-  fetchLatestBaileysVersion
+  fetchLatestBaileysVersion,
+  delay
 } from '@whiskeysockets/baileys'
 import pino from 'pino'
 import cors from 'cors'
@@ -49,16 +50,14 @@ async function startWA() {
   try {
     console.log('🔄 Iniciando conexão com WhatsApp...')
     
-    // Buscar versão mais recente do Baileys
     const { version } = await fetchLatestBaileysVersion()
     console.log(`📱 Usando versão do WA Web: ${version.join('.')}`)
 
-    // Carregar estado de autenticação
     const { state, saveCreds } = await useMultiFileAuthState(SESSIONS_DIR)
     
     sock = makeWASocket({
       version,
-      printQRInTerminal: true, // Também mostra no terminal para debug
+      printQRInTerminal: true,
       auth: state,
       logger: pino({ level: 'silent' }),
       browser: ['WhatsApp Broadcaster', 'Chrome', '120.0.0'],
@@ -66,11 +65,9 @@ async function startWA() {
       markOnlineOnConnect: true
     })
 
-    // Evento de atualização de conexão
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update
 
-      // QR Code disponível
       if (qr) {
         console.log('📱 QR Code gerado!')
         qrDinamic = qr
@@ -80,7 +77,6 @@ async function startWA() {
         }
       }
 
-      // Conexão aberta
       if (connection === 'open') {
         ready = true
         qrDinamic = null
@@ -89,7 +85,6 @@ async function startWA() {
         console.log(`📞 Número: ${sock.user?.id}`)
       }
 
-      // Conexão fechada
       if (connection === 'close') {
         ready = false
         const shouldReconnect = 
@@ -110,37 +105,32 @@ async function startWA() {
         }
       }
 
-      // Conectando
       if (connection === 'connecting') {
         console.log('🔌 Conectando ao WhatsApp...')
       }
     })
 
-    // Salvar credenciais quando atualizadas
     sock.ev.on('creds.update', saveCreds)
 
-    // Armazena mensagens recebidas
+    // Armazena mensagens recebidas - COM ESTRUTURA COMPLETA
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
       if (type !== 'notify') return
 
       for (const msg of messages) {
-        // Ignora mensagens de status
         if (msg.key.remoteJid === 'status@broadcast') continue
 
         const from = msg.key.remoteJid
         
-        // Inicializa array se não existir
         if (!store.messages[from]) {
           store.messages[from] = []
         }
         
-        // Armazena apenas últimas 100 mensagens por grupo
+        // ✅ ARMAZENA MENSAGEM COMPLETA COM TODA ESTRUTURA
         store.messages[from].push(msg)
         if (store.messages[from].length > 100) {
           store.messages[from].shift()
         }
 
-        // Extrai texto da mensagem
         const text =
           msg.message?.conversation ||
           msg.message?.extendedTextMessage?.text ||
@@ -148,28 +138,34 @@ async function startWA() {
           msg.message?.videoMessage?.caption ||
           '(mídia sem legenda)'
 
-        // Nome do remetente
         const senderName = msg.pushName || 
           msg.key.participant?.split('@')[0] || 
           'Desconhecido'
 
-        // ID único da mensagem para reply
         const messageId = msg.key.id
 
-        console.log(`📩 Mensagem recebida em ${from}: ${senderName}: ${text}`)
+        // 🔍 DEBUG: Log completo da estrutura da mensagem
+        console.log('📩 Mensagem recebida:', {
+          from,
+          senderName,
+          text,
+          messageId,
+          hasKey: !!msg.key,
+          hasMessage: !!msg.message,
+          keyStructure: JSON.stringify(msg.key),
+          messageType: Object.keys(msg.message || {})[0]
+        })
 
-        // Emite para frontend com ID da mensagem
         io.emit('message', {
           groupId: from,
           from: senderName,
           text,
           timestamp: (msg.messageTimestamp * 1000) || Date.now(),
-          messageId  // Adiciona ID para o frontend poder referenciar
+          messageId
         })
       }
     })
 
-    // Tratamento de erros
     sock.ev.on('connection.error', (error) => {
       console.error('❌ Erro na conexão:', error)
     })
@@ -180,9 +176,6 @@ async function startWA() {
   }
 }
 
-// ---------------------------
-// Função auxiliar para identificar motivo da desconexão
-// ---------------------------
 function getDisconnectReason(statusCode) {
   const reasons = {
     [DisconnectReason.badSession]: 'Sessão inválida',
@@ -197,9 +190,6 @@ function getDisconnectReason(statusCode) {
   return reasons[statusCode] || `Desconhecido (${statusCode})`
 }
 
-// ---------------------------
-// REST: Status da conexão
-// ---------------------------
 app.get('/api/status', (req, res) => {
   res.json({ 
     ready, 
@@ -208,9 +198,6 @@ app.get('/api/status', (req, res) => {
   })
 })
 
-// ---------------------------
-// REST: lista grupos
-// ---------------------------
 app.get('/api/groups', async (req, res) => {
   try {
     if (!sock || !ready) {
@@ -231,9 +218,6 @@ app.get('/api/groups', async (req, res) => {
   }
 })
 
-// ---------------------------
-// REST: foto do grupo
-// ---------------------------
 app.get('/api/group-picture/:jid', async (req, res) => {
   try {
     if (!sock || !ready) return res.status(503).end()
@@ -248,7 +232,7 @@ app.get('/api/group-picture/:jid', async (req, res) => {
 })
 
 // ---------------------------
-// REST: envio de mensagens
+// REST: envio de mensagens COM DEBUG
 // ---------------------------
 app.post('/api/send', async (req, res) => {
   try {
@@ -266,33 +250,71 @@ app.post('/api/send', async (req, res) => {
       return res.status(400).json({ error: 'Mensagem vazia' })
     }
 
+    console.log('\n🔍 DEBUG ENVIO:')
+    console.log('Message:', message)
+    console.log('ReplyTo:', JSON.stringify(replyTo, null, 2))
+
     const results = []
     
     for (const gid of groupIds) {
       try {
-        // Se for resposta - CORRIGIDO para usar messageId
+        // TENTATIVA COM QUOTED
         if (replyTo?.groupId && replyTo?.messageId) {
           const msgs = store.messages[replyTo.groupId] || []
           
-          // Buscar mensagem pelo ID
+          console.log(`\n🔍 Buscando mensagem para reply:`)
+          console.log(`- Grupo: ${replyTo.groupId}`)
+          console.log(`- MessageId: ${replyTo.messageId}`)
+          console.log(`- Total msgs no cache: ${msgs.length}`)
+          
           const original = msgs.find(m => m.key.id === replyTo.messageId)
           
           if (original) {
-            console.log(`💬 Respondendo mensagem: ${replyTo.messageId}`)
+            console.log(`✅ Mensagem original encontrada!`)
+            console.log(`- Estrutura key:`, JSON.stringify(original.key, null, 2))
+            console.log(`- Tipo mensagem:`, Object.keys(original.message || {}))
             
-            // Enviar com quoted no formato correto do Baileys
-            await sock.sendMessage(gid, { 
-              text: message.trim() 
-            }, { 
-              quoted: original 
-            })
+            try {
+              // MÉTODO 1: Quoted direto
+              console.log('\n🧪 TESTE 1: Enviando com quoted no 3º parâmetro...')
+              await sock.sendMessage(gid, { 
+                text: message.trim() 
+              }, { 
+                quoted: original 
+              })
+              console.log('✅ TESTE 1: Sucesso!')
+              
+            } catch (error) {
+              console.error('❌ TESTE 1 falhou:', error.message)
+              
+              // MÉTODO 2: Fallback - construir contextInfo manualmente
+              try {
+                console.log('\n🧪 TESTE 2: Enviando com contextInfo manual...')
+                await sock.sendMessage(gid, {
+                  text: message.trim(),
+                  contextInfo: {
+                    stanzaId: original.key.id,
+                    participant: original.key.participant || original.key.remoteJid,
+                    quotedMessage: original.message
+                  }
+                })
+                console.log('✅ TESTE 2: Sucesso!')
+              } catch (error2) {
+                console.error('❌ TESTE 2 também falhou:', error2.message)
+                throw error2
+              }
+            }
+            
           } else {
-            console.log(`⚠️ Mensagem original não encontrada para reply: ${replyTo.messageId}`)
-            // Se não encontrar, envia sem quoted
+            console.log(`⚠️ Mensagem original NÃO encontrada`)
+            console.log(`IDs disponíveis no cache:`, msgs.map(m => m.key.id).slice(-5))
+            
+            // Envia sem reply
             await sock.sendMessage(gid, { text: message.trim() })
           }
         } else {
           // Mensagem normal sem reply
+          console.log('📤 Enviando mensagem normal (sem reply)')
           await sock.sendMessage(gid, { text: message.trim() })
         }
         
@@ -307,8 +329,7 @@ app.post('/api/send', async (req, res) => {
         
         results.push({ groupId: gid, success: true })
         
-        // Pequeno delay entre envios para evitar ban
-        await new Promise(resolve => setTimeout(resolve, 1000))
+        await delay(1000)
         
       } catch (error) {
         console.error(`❌ Erro ao enviar para ${gid}:`, error)
@@ -324,9 +345,6 @@ app.post('/api/send', async (req, res) => {
   }
 })
 
-// ---------------------------
-// Socket.IO: status sob demanda
-// ---------------------------
 io.on('connection', (socket) => {
   console.log('🔌 Cliente conectado via Socket.IO')
   
@@ -343,9 +361,6 @@ io.on('connection', (socket) => {
   })
 })
 
-// ---------------------------
-// Health check
-// ---------------------------
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
@@ -354,9 +369,6 @@ app.get('/health', (req, res) => {
   })
 })
 
-// ---------------------------
-// Inicialização do servidor
-// ---------------------------
 const PORT = process.env.PORT || 3000
 
 server.listen(PORT, async () => {
@@ -370,7 +382,6 @@ server.listen(PORT, async () => {
   await startWA()
 })
 
-// Tratamento de erros não capturados
 process.on('unhandledRejection', (error) => {
   console.error('❌ Unhandled Rejection:', error)
 })
