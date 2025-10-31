@@ -1,6 +1,11 @@
 // docs/app.js
 document.addEventListener('DOMContentLoaded', () => {
-  const socket = io(window.BACKEND_URL);
+  const socket = io(window.BACKEND_URL, {
+    transports: ['websocket', 'polling'],
+    reconnection: true,
+    reconnectionAttempts: 5,
+    reconnectionDelay: 1000
+  });
 
   const el = {
     qr: document.getElementById('qr'),
@@ -8,31 +13,94 @@ document.addEventListener('DOMContentLoaded', () => {
     groups: document.getElementById('groups'),
     chats: document.getElementById('chats'),
     message: document.getElementById('message'),
-    send: document.getElementById('send')
+    send: document.getElementById('send'),
+    qrCard: document.getElementById('qr-card')
   };
 
   const state = {
     groups: [],
     selected: new Set(),
     chatByGroup: new Map(),
-    messageIdMap: new Map(), // Mapeia texto -> messageId
-    replyingTo: null
+    messageIdMap: new Map(),
+    replyingTo: null,
+    connectionAttempts: 0
   };
 
   // --- Funções de UI ---
   function setQR(url) {
-    el.qr.innerHTML = `<img src="${url}" alt="QR Code" class="w-full h-full object-contain rounded-lg" />`;
+    if (url) {
+      el.qr.innerHTML = `<img src="${url}" alt="QR Code" class="w-full h-full object-contain rounded-lg" />`;
+      setStatus('Escaneie o QR Code com seu WhatsApp', false);
+    } else {
+      el.qr.innerHTML = '<span class="text-gray-500 text-sm">Aguardando QR...</span>';
+    }
   }
 
   function setStatus(text, ok) {
-    el.status.innerHTML = `<span class="${ok ? 'text-emerald-600' : 'text-red-600'}">${text}</span>`;
+    el.status.innerHTML = `
+      <span class="${ok ? 'text-emerald-600' : 'text-amber-600'} flex items-center gap-2">
+        ${ok ? 
+          '<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path></svg>' : 
+          '<svg class="w-4 h-4 animate-pulse" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path></svg>'
+        }
+        ${text}
+      </span>
+    `;
+  }
+
+  function addResetButton() {
+    // Remove botão existente se houver
+    const existingBtn = document.getElementById('reset-session-btn');
+    if (existingBtn) existingBtn.remove();
+    
+    // Adiciona botão de reset no card do QR
+    const resetBtn = document.createElement('button');
+    resetBtn.id = 'reset-session-btn';
+    resetBtn.className = 'mt-3 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium transition-all w-full';
+    resetBtn.innerHTML = '🔄 Gerar Novo QR Code';
+    resetBtn.onclick = async () => {
+      if (confirm('Isso desconectará a sessão atual. Continuar?')) {
+        resetBtn.disabled = true;
+        resetBtn.innerHTML = '<span class="animate-pulse">Resetando...</span>';
+        
+        try {
+          const response = await fetch(`${window.BACKEND_URL}/api/reset-session`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+          });
+          
+          if (response.ok) {
+            showToast('Sessão resetada! Aguarde novo QR...', 'success');
+            el.qr.innerHTML = '<span class="text-gray-500 text-sm animate-pulse">Gerando novo QR...</span>';
+            setStatus('Gerando novo QR Code...', false);
+          } else {
+            throw new Error('Falha ao resetar sessão');
+          }
+        } catch (error) {
+          showToast('Erro ao resetar: ' + error.message, 'error');
+          resetBtn.disabled = false;
+          resetBtn.innerHTML = '🔄 Gerar Novo QR Code';
+        }
+      }
+    };
+    
+    const qrCard = document.getElementById('qr-card');
+    if (qrCard && !qrCard.classList.contains('hidden')) {
+      qrCard.appendChild(resetBtn);
+    }
   }
 
   function renderGroups() {
     el.groups.innerHTML = '';
+    
+    if (state.groups.length === 0) {
+      el.groups.innerHTML = '<div class="text-gray-500 text-center py-8">Nenhum grupo disponível</div>';
+      return;
+    }
+    
     for (const g of state.groups) {
       const div = document.createElement('div');
-      div.className = 'flex items-center space-x-2 border rounded-lg p-2 hover:bg-slate-50 cursor-pointer';
+      div.className = 'flex items-center space-x-2 border rounded-lg p-2 hover:bg-slate-50 cursor-pointer transition-all';
 
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
@@ -47,18 +115,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const img = document.createElement('img');
       img.className = 'w-8 h-8 rounded-full object-cover bg-gray-200';
-      img.onerror = () => { img.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23999"%3E%3Cpath d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/%3E%3C/svg%3E'; };
+      img.onerror = () => { 
+        img.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23999"%3E%3Cpath d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/%3E%3C/svg%3E'; 
+      };
       
       fetch(`${window.BACKEND_URL}/api/group-picture/${g.id}`)
         .then(r => r.ok ? r.json() : null)
         .then(d => { if (d?.url) img.src = d.url; })
         .catch(() => {});
 
-      const span = document.createElement('span');
-      span.textContent = g.subject;
-      span.className = 'text-sm font-medium truncate flex-1';
+      const info = document.createElement('div');
+      info.className = 'flex-1';
+      info.innerHTML = `
+        <div class="text-sm font-medium truncate">${g.subject}</div>
+        ${g.participants ? `<div class="text-xs text-gray-500">${g.participants} participantes</div>` : ''}
+      `;
 
-      // Click no div seleciona/deseleciona
       div.onclick = (e) => {
         if (e.target !== checkbox) {
           checkbox.checked = !checkbox.checked;
@@ -68,7 +140,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       div.appendChild(checkbox);
       div.appendChild(img);
-      div.appendChild(span);
+      div.appendChild(info);
       el.groups.appendChild(div);
     }
     updateSelectedCount();
@@ -93,19 +165,29 @@ document.addEventListener('DOMContentLoaded', () => {
       if (r.ok) {
         state.groups = data;
         renderGroups();
+        if (data.length > 0) {
+          showToast(`${data.length} grupos carregados`, 'success');
+        }
+      } else {
+        throw new Error(data.error || 'Falha ao buscar grupos');
       }
     } catch (e) {
       console.error('Erro ao buscar grupos:', e);
+      el.groups.innerHTML = `
+        <div class="text-red-500 text-center py-8">
+          <p>Erro ao carregar grupos</p>
+          <button onclick="location.reload()" class="mt-2 text-sm underline">Recarregar página</button>
+        </div>
+      `;
     }
   }
 
-  // --- Chat visual melhorado ---
+  // --- Chat visual ---
   function pushChat(groupId, who, text, ts, messageId, replyText) {
     if (!state.chatByGroup.has(groupId)) state.chatByGroup.set(groupId, []);
     const chatEntry = { who, text, ts, messageId, replyText };
     state.chatByGroup.get(groupId).push(chatEntry);
     
-    // Armazena messageId para poder referenciar depois
     if (messageId && groupId) {
       const key = `${groupId}:${text}`;
       state.messageIdMap.set(key, messageId);
@@ -127,7 +209,6 @@ document.addEventListener('DOMContentLoaded', () => {
       const card = document.createElement('div');
       card.className = 'border rounded-lg p-3 bg-white';
       
-      // Header do grupo
       const header = document.createElement('div');
       header.className = 'flex items-center justify-between mb-3 pb-2 border-b';
       header.innerHTML = `
@@ -136,7 +217,6 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
       card.appendChild(header);
 
-      // Container de mensagens com scroll
       const messagesContainer = document.createElement('div');
       messagesContainer.className = 'space-y-1 max-h-60 overflow-y-auto scrollbar-thin';
       
@@ -162,7 +242,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="flex items-start gap-2">
             <div class="flex-1">
               ${!isMe ? `<div class="font-semibold text-xs text-gray-600 mb-1">${m.who}</div>` : ''}
-              <div class="text-gray-800">${m.text}</div>
+              <div class="text-gray-800 break-words">${m.text}</div>
             </div>
             <div class="text-[10px] text-gray-400 mt-auto">${time}</div>
           </div>
@@ -170,9 +250,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         msgDiv.innerHTML = content;
 
-        // Clique para responder
         msgDiv.onclick = () => {
-          // Limpa resposta anterior
           if (state.replyingTo) {
             el.message.value = el.message.value.replace(/^↩️ Respondendo a: .+\n\n/, '');
           }
@@ -184,17 +262,14 @@ document.addEventListener('DOMContentLoaded', () => {
             messageId: m.messageId || state.messageIdMap.get(`${gid}:${m.text}`)
           };
           
-          // Visual feedback
           document.querySelectorAll('.replying-to').forEach(el => el.classList.remove('replying-to', 'ring-2', 'ring-blue-400'));
           msgDiv.classList.add('replying-to', 'ring-2', 'ring-blue-400');
           
-          // Atualiza textarea
           const currentText = el.message.value;
           el.message.value = `↩️ Respondendo a: ${m.who} - "${m.text.substring(0, 50)}${m.text.length > 50 ? '...' : ''}"\n\n${currentText}`;
           el.message.focus();
           el.message.setSelectionRange(el.message.value.length, el.message.value.length);
           
-          // Mostra indicador visual
           showReplyIndicator(m.who, m.text);
         };
 
@@ -205,7 +280,6 @@ document.addEventListener('DOMContentLoaded', () => {
       el.chats.appendChild(card);
     }
     
-    // Auto-scroll para última mensagem
     const lastContainer = el.chats.lastElementChild?.querySelector('.overflow-y-auto');
     if (lastContainer) {
       lastContainer.scrollTop = lastContainer.scrollHeight;
@@ -213,14 +287,12 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function showReplyIndicator(from, text) {
-    // Remove indicador anterior se existir
     const existingIndicator = document.getElementById('reply-indicator');
     if (existingIndicator) existingIndicator.remove();
     
-    // Cria novo indicador
     const indicator = document.createElement('div');
     indicator.id = 'reply-indicator';
-    indicator.className = 'fixed bottom-20 right-6 bg-white shadow-lg rounded-lg p-3 max-w-sm border-l-4 border-blue-500 z-50';
+    indicator.className = 'fixed bottom-20 right-6 bg-white shadow-lg rounded-lg p-3 max-w-sm border-l-4 border-blue-500 z-50 animate-pulse';
     indicator.innerHTML = `
       <div class="flex items-center justify-between">
         <div class="flex-1">
@@ -236,16 +308,13 @@ document.addEventListener('DOMContentLoaded', () => {
     `;
     document.body.appendChild(indicator);
     
-    // Remove após 5 segundos
     setTimeout(() => {
       if (document.getElementById('reply-indicator')) {
-        indicator.style.opacity = '0';
-        setTimeout(() => indicator.remove(), 300);
+        indicator.classList.remove('animate-pulse');
       }
-    }, 5000);
+    }, 2000);
   }
 
-  // Função global para cancelar resposta
   window.cancelReply = function() {
     state.replyingTo = null;
     el.message.value = el.message.value.replace(/^↩️ Respondendo a: .+\n\n/, '');
@@ -255,9 +324,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   };
 
-  // --- Envio de mensagens melhorado ---
+  // --- Envio de mensagens ---
   el.send.addEventListener('click', async () => {
-    // Remove indicação de resposta do texto
     let text = el.message.value.replace(/^↩️ Respondendo a: .+\n\n/, '').trim();
     
     if (!text) {
@@ -291,10 +359,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const now = Date.now();
       
-      // Processa resultados por grupo
       if (data.results) {
+        let successCount = 0;
         for (const result of data.results) {
           if (result.success) {
+            successCount++;
             pushChat(
               result.groupId, 
               'Você', 
@@ -305,17 +374,17 @@ document.addEventListener('DOMContentLoaded', () => {
             );
           }
         }
+        showToast(`Enviado para ${successCount}/${ids.length} grupos`, successCount === ids.length ? 'success' : 'warning');
       } else {
-        // Fallback para versão antiga
         for (const gid of ids) {
           pushChat(gid, 'Você', text, now, null, state.replyingTo ? state.replyingTo.text : null);
         }
+        showToast(`Mensagem enviada!`, 'success');
       }
 
       el.message.value = '';
       state.replyingTo = null;
       window.cancelReply();
-      showToast(`Mensagem enviada para ${ids.length} grupo(s)`, 'success');
       
     } catch (e) {
       showToast('Erro: ' + e.message, 'error');
@@ -325,16 +394,22 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Sistema de Toast notifications
+  // Toast notifications
   function showToast(message, type = 'info') {
+    const existingToasts = document.querySelectorAll('.toast-notification');
+    const offset = existingToasts.length * 60;
+    
     const toast = document.createElement('div');
-    toast.className = `fixed top-4 right-4 px-4 py-2 rounded-lg shadow-lg z-50 animate-pulse ${
+    toast.className = `toast-notification fixed right-4 px-4 py-2 rounded-lg shadow-lg z-50 transition-all ${
       type === 'success' ? 'bg-green-500 text-white' :
       type === 'error' ? 'bg-red-500 text-white' :
+      type === 'warning' ? 'bg-amber-500 text-white' :
       'bg-blue-500 text-white'
     }`;
+    toast.style.top = `${20 + offset}px`;
     toast.textContent = message;
     document.body.appendChild(toast);
+    
     setTimeout(() => {
       toast.style.opacity = '0';
       setTimeout(() => toast.remove(), 300);
@@ -344,32 +419,66 @@ document.addEventListener('DOMContentLoaded', () => {
   // --- Eventos Socket.IO ---
   socket.on('connect', () => {
     console.log('✅ Socket conectado ao backend');
+    state.connectionAttempts = 0;
     showToast('Conectado ao servidor', 'success');
   });
   
   socket.on('disconnect', () => {
     console.log('❌ Socket desconectado');
-    showToast('Desconectado do servidor', 'error');
+    setStatus('Desconectado do servidor', false);
   });
   
-  socket.on('qr', ({ dataUrl }) => setQR(dataUrl));
+  socket.on('reconnecting', (attemptNumber) => {
+    state.connectionAttempts = attemptNumber;
+    console.log(`🔄 Tentando reconectar... (tentativa ${attemptNumber})`);
+    setStatus(`Reconectando... (tentativa ${attemptNumber})`, false);
+  });
+  
+  socket.on('reconnect_failed', () => {
+    console.log('❌ Falha ao reconectar');
+    setStatus('Falha na conexão. Recarregue a página.', false);
+    showToast('Conexão perdida. Recarregue a página.', 'error');
+  });
+  
+  socket.on('qr', ({ dataUrl }) => {
+    console.log('📱 QR Code recebido');
+    setQR(dataUrl);
+    addResetButton();
+    if (el.qrCard?.classList.contains('hidden')) {
+      el.qrCard.classList.remove('hidden');
+    }
+  });
   
   socket.on('ready', () => { 
+    console.log('✅ WhatsApp conectado');
     setStatus('WhatsApp conectado ✅', true); 
     fetchGroups();
     showToast('WhatsApp conectado com sucesso!', 'success');
+    if (el.qrCard && !el.qrCard.classList.contains('hidden')) {
+      el.qrCard.classList.add('hidden');
+    }
   });
   
   socket.on('disconnected', () => {
-    setStatus('Desconectado. Aguarde novo QR ou reconexão.', false);
-    showToast('WhatsApp desconectado', 'error');
+    setStatus('WhatsApp desconectado. Aguarde reconexão...', false);
+    if (el.qrCard?.classList.contains('hidden')) {
+      el.qrCard.classList.remove('hidden');
+      setQR(null);
+      addResetButton();
+    }
   });
   
   socket.on('status', ({ ready }) => { 
     if (ready) { 
       setStatus('WhatsApp conectado ✅', true); 
-      fetchGroups(); 
-    } 
+      fetchGroups();
+      if (el.qrCard && !el.qrCard.classList.contains('hidden')) {
+        el.qrCard.classList.add('hidden');
+      }
+    } else {
+      setStatus('Aguardando conexão...', false);
+      addResetButton();
+    }
   });
   
   socket.on('message', ({ groupId, from, text, timestamp, messageId }) => {
@@ -377,19 +486,21 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   
   socket.on('message_sent', ({ groupId, text, timestamp, messageId, isReply }) => {
-    // Já adicionado no success do envio, mas mantém para redundância
     console.log('Confirmação de envio:', { groupId, messageId, isReply });
   });
 
   // Atalhos de teclado
   document.addEventListener('keydown', (e) => {
-    // Ctrl+Enter para enviar
     if (e.ctrlKey && e.key === 'Enter' && document.activeElement === el.message) {
       el.send.click();
     }
-    // ESC para cancelar resposta
     if (e.key === 'Escape' && state.replyingTo) {
       window.cancelReply();
     }
   });
+
+  // Solicita status inicial
+  setTimeout(() => {
+    socket.emit('request-status');
+  }, 1000);
 });
