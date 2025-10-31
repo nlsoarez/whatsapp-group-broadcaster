@@ -1,4 +1,4 @@
-// docs/app.js
+// docs/app.js - VERSÃO CORRIGIDA COM REPLY
 document.addEventListener('DOMContentLoaded', () => {
   const socket = io(window.BACKEND_URL);
 
@@ -69,9 +69,10 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // --- Chat visual ---
-  function pushChat(groupId, who, text, ts, replyText) {
+  // CORRIGIDO: Agora inclui messageId
+  function pushChat(groupId, who, text, ts, replyText, messageId) {
     if (!state.chatByGroup.has(groupId)) state.chatByGroup.set(groupId, []);
-    state.chatByGroup.get(groupId).push({ who, text, ts, replyText });
+    state.chatByGroup.get(groupId).push({ who, text, ts, replyText, messageId });
     renderChats();
   }
 
@@ -103,10 +104,15 @@ document.addEventListener('DOMContentLoaded', () => {
           line.innerHTML = `<b>${m.who}:</b> ${m.text}<div class="text-[10px] text-slate-400">${time}</div>`;
         }
 
-        // Clique para responder
+        // CORRIGIDO: Clique para responder usando messageId
         line.onclick = () => {
-          state.replyingTo = { groupId: gid, text: m.text, from: m.who };
-          el.message.value = `↩️ Respondendo: ${m.text}\n\n`;
+          state.replyingTo = { 
+            groupId: gid, 
+            text: m.text, 
+            from: m.who,
+            messageId: m.messageId  // ADICIONADO: messageId para reply correto
+          };
+          el.message.value = `↩️ Respondendo "${m.who}": ${m.text.substring(0, 50)}${m.text.length > 50 ? '...' : ''}\n\n`;
           el.message.focus();
         };
 
@@ -119,13 +125,30 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- Envio de mensagens ---
   el.send.addEventListener('click', async () => {
-    const text = el.message.value.trim();
+    let text = el.message.value.trim();
     if (!text) return alert('Escreva uma mensagem.');
+    
     const ids = Array.from(state.selected);
     if (!ids.length) return alert('Selecione ao menos um grupo.');
 
+    // Remove o texto de "Respondendo" da mensagem final
+    if (state.replyingTo && text.startsWith('↩️ Respondendo')) {
+      const lines = text.split('\n');
+      // Remove primeira linha (preview) e linha vazia
+      text = lines.slice(2).join('\n').trim();
+    }
+
     const payload = { groupIds: ids, message: text };
-    if (state.replyingTo) payload.replyTo = state.replyingTo;
+    
+    // CORRIGIDO: Envia messageId ao invés de apenas texto
+    if (state.replyingTo) {
+      payload.replyTo = {
+        groupId: state.replyingTo.groupId,
+        messageId: state.replyingTo.messageId,  // AGORA USA messageId!
+        text: state.replyingTo.text,
+        from: state.replyingTo.from
+      };
+    }
 
     el.send.disabled = true;
     try {
@@ -138,8 +161,16 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!r.ok || !data.ok) throw new Error(data.error || 'Falha no envio.');
 
       const now = Date.now();
-      for (const gid of ids)
-        pushChat(gid, 'Você', text, now, state.replyingTo ? state.replyingTo.text : null);
+      for (const gid of ids) {
+        pushChat(
+          gid, 
+          'Você', 
+          text, 
+          now, 
+          state.replyingTo ? state.replyingTo.text : null,
+          null  // Mensagens enviadas não precisam de messageId para reply
+        );
+      }
 
       el.message.value = '';
       state.replyingTo = null;
@@ -156,6 +187,13 @@ document.addEventListener('DOMContentLoaded', () => {
   socket.on('ready', () => { setStatus('WhatsApp conectado ✅', true); fetchGroups(); });
   socket.on('disconnected', () => setStatus('Desconectado. Aguarde novo QR ou reconexão.', false));
   socket.on('status', ({ ready }) => { if (ready) { setStatus('WhatsApp conectado ✅', true); fetchGroups(); } });
-  socket.on('message', ({ groupId, from, text, timestamp }) => pushChat(groupId, from, text, timestamp));
-  socket.on('message_sent', ({ groupId, text, timestamp }) => pushChat(groupId, 'Você', text, timestamp));
+  
+  // CORRIGIDO: Agora recebe e armazena messageId
+  socket.on('message', ({ groupId, from, text, timestamp, messageId }) => {
+    pushChat(groupId, from, text, timestamp, null, messageId);
+  });
+  
+  socket.on('message_sent', ({ groupId, text, timestamp, replyTo }) => {
+    pushChat(groupId, 'Você', text, timestamp, replyTo?.text || null, null);
+  });
 });
