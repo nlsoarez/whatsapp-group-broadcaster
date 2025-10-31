@@ -1,1 +1,58 @@
-.vvdsvev
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>WhatsApp Group Broadcaster</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-900">
+<div class="max-w-6xl mx-auto p-4">
+<h1 class="text-2xl font-bold mb-4">WhatsApp Group Broadcaster</h1>
+
+
+<!-- Login via QR -->
+<div class="grid md:grid-cols-2 gap-6 mb-6">
+<div class="p-4 bg-white rounded-xl shadow">
+<h2 class="font-semibold mb-2">1) Login via QR</h2>
+<p class="text-sm text-slate-600 mb-2">Escaneie o QR com o WhatsApp para conectar.</p>
+<div id="qr" class="aspect-square bg-slate-100 flex items-center justify-center rounded-lg">
+<span class="text-slate-500 text-sm">Aguardando QR...</span>
+</div>
+<p id="wa-status" class="mt-2 text-sm"></p>
+</div>
+
+
+<!-- Envio -->
+<div class="p-4 bg-white rounded-xl shadow">
+<h2 class="font-semibold mb-2">3) Enviar mensagem</h2>
+<textarea id="message" class="w-full border rounded-lg p-2 h-28" placeholder="Escreva sua mensagem..."></textarea>
+<button id="send" class="mt-2 px-4 py-2 rounded-lg bg-emerald-600 text-white disabled:opacity-50">Enviar para grupos selecionados</button>
+<p class="text-xs text-slate-500 mt-1">Dica: selecione os grupos na seção ao lado antes de enviar.</p>
+</div>
+</div>
+
+
+<!-- Seleção de grupos & Chats -->
+<div class="grid md:grid-cols-2 gap-6">
+<div class="p-4 bg-white rounded-xl shadow">
+<h2 class="font-semibold mb-2">2) Selecionar grupos</h2>
+<div id="groups" class="space-y-2 max-h-[480px] overflow-auto"></div>
+</div>
+
+
+<div class="p-4 bg-white rounded-xl shadow">
+<h2 class="font-semibold mb-2">4) Monitoramento</h2>
+<div id="chats" class="space-y-4 max-h-[480px] overflow-auto"></div>
+</div>
+</div>
+
+
+<footer class="text-xs text-slate-500 mt-8">Feito com Baileys + Socket.IO. Mantenha seu celular conectado ao WhatsApp.</footer>
+</div>
+
+
+<script src="app.js"></script>
+</body>
+</html>
