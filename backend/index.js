@@ -16,9 +16,10 @@ app.use(express.json())
 
 let sock
 let ready = false
+const contactedGroups = new Set() // mantém todos os grupos que já receberam mensagens
 const lastBroadcastByGroup = new Map()
 
-// 🔧 Função utilitária para extrair texto da mensagem
+// 🧠 Extrair texto de mensagem
 function extractMessageText(m) {
   try {
     if (m.message?.conversation) return m.message.conversation
@@ -31,7 +32,7 @@ function extractMessageText(m) {
   }
 }
 
-// 🚀 Função principal de inicialização do WhatsApp
+// 🚀 Inicializar WhatsApp
 async function startWA() {
   const { state, saveCreds } = await useMultiFileAuthState('auth_info')
   const { version } = await fetchLatestBaileysVersion()
@@ -50,7 +51,7 @@ async function startWA() {
   sock.ev.on('creds.update', saveCreds)
 
   sock.ev.on('connection.update', async (update) => {
-    const { connection, lastDisconnect, qr } = update
+    const { connection, qr } = update
 
     if (qr) {
       io.emit('qr', { dataUrl: await import('qrcode').then(qrPkg => qrPkg.toDataURL(qr)) })
@@ -70,7 +71,7 @@ async function startWA() {
     }
   })
 
-  // 📩 Receber mensagens e replicar entre grupos broadcasted
+  // 📩 Captura e replicação total
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return
 
@@ -79,27 +80,26 @@ async function startWA() {
       if (!jid?.endsWith('@g.us')) continue
 
       const ts = (m.messageTimestamp || Date.now()) * 1000
-      const lastTs = lastBroadcastByGroup.get(jid) || 0
       const body = extractMessageText(m)
-      if (!body || ts < lastTs) continue
+      if (!body) continue
 
-      const from = m.pushName || m.key?.participant || 'desconhecido'
+      const fromMe = m.key.fromMe
+      const from = fromMe ? 'Você' : (m.pushName || m.key?.participant || 'desconhecido')
 
       // Envia para o frontend
       io.emit('message', { groupId: jid, from, text: body, timestamp: ts })
 
-      // 🔁 Replicação automática entre grupos broadcasted
-      const broadcastedGroups = Array.from(lastBroadcastByGroup.keys())
-      if (broadcastedGroups.includes(jid)) {
+      // 🔁 Se a mensagem foi enviada por você → replica em todos os grupos já contatados
+      if (fromMe) {
         const now = Date.now()
-        for (const targetId of broadcastedGroups) {
+        for (const targetId of contactedGroups) {
           if (targetId === jid) continue
           try {
             await sock.sendMessage(targetId, { text: body })
             io.emit('message_sent', { groupId: targetId, text: body, timestamp: now })
-            console.log(`🔁 Mensagem replicada de ${jid} para ${targetId}`)
+            console.log(`🔁 Replicada sua resposta de ${jid} → ${targetId}`)
           } catch (err) {
-            console.error('Erro ao replicar mensagem:', err)
+            console.error('Erro ao replicar resposta:', err)
           }
         }
       }
@@ -143,6 +143,7 @@ app.post('/api/send', async (req, res) => {
     const results = []
     for (const gid of groupIds) {
       await sock.sendMessage(gid, { text: message })
+      contactedGroups.add(gid) // adiciona ao histórico global
       lastBroadcastByGroup.set(gid, now)
       io.emit('message_sent', { groupId: gid, text: message, timestamp: now })
       results.push({ groupId: gid, ok: true })
