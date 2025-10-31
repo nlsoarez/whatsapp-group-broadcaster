@@ -153,14 +153,18 @@ async function startWA() {
           msg.key.participant?.split('@')[0] || 
           'Desconhecido'
 
+        // ID único da mensagem para reply
+        const messageId = msg.key.id
+
         console.log(`📩 Mensagem recebida em ${from}: ${senderName}: ${text}`)
 
-        // Emite para frontend
+        // Emite para frontend com ID da mensagem
         io.emit('message', {
           groupId: from,
           from: senderName,
           text,
-          timestamp: (msg.messageTimestamp * 1000) || Date.now()
+          timestamp: (msg.messageTimestamp * 1000) || Date.now(),
+          messageId  // Adiciona ID para o frontend poder referenciar
         })
       }
     })
@@ -268,17 +272,18 @@ app.post('/api/send', async (req, res) => {
       try {
         let options = {}
 
-        // Se for resposta
-        if (replyTo?.groupId && replyTo?.text) {
+        // Se for resposta - CORRIGIDO para usar messageId
+        if (replyTo?.groupId && replyTo?.messageId) {
           const msgs = store.messages[replyTo.groupId] || []
-          const original = msgs.find(
-            m =>
-              m.message?.conversation === replyTo.text ||
-              m.message?.extendedTextMessage?.text === replyTo.text
-          )
+          
+          // Buscar mensagem pelo ID
+          const original = msgs.find(m => m.key.id === replyTo.messageId)
           
           if (original) {
+            console.log(`💬 Respondendo mensagem: ${replyTo.messageId}`)
             options.quoted = original
+          } else {
+            console.log(`⚠️ Mensagem original não encontrada para reply: ${replyTo.messageId}`)
           }
         }
 
@@ -289,7 +294,8 @@ app.post('/api/send', async (req, res) => {
         io.emit('message_sent', { 
           groupId: gid, 
           text: message, 
-          timestamp: Date.now() 
+          timestamp: Date.now(),
+          replyTo: replyTo || null
         })
         
         results.push({ groupId: gid, success: true })
