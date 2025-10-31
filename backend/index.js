@@ -270,8 +270,6 @@ app.post('/api/send', async (req, res) => {
     
     for (const gid of groupIds) {
       try {
-        let options = {}
-
         // Se for resposta - CORRIGIDO para usar messageId
         if (replyTo?.groupId && replyTo?.messageId) {
           const msgs = store.messages[replyTo.groupId] || []
@@ -281,13 +279,22 @@ app.post('/api/send', async (req, res) => {
           
           if (original) {
             console.log(`💬 Respondendo mensagem: ${replyTo.messageId}`)
-            options.quoted = original
+            
+            // Enviar com quoted no formato correto do Baileys
+            await sock.sendMessage(gid, { 
+              text: message.trim() 
+            }, { 
+              quoted: original 
+            })
           } else {
             console.log(`⚠️ Mensagem original não encontrada para reply: ${replyTo.messageId}`)
+            // Se não encontrar, envia sem quoted
+            await sock.sendMessage(gid, { text: message.trim() })
           }
+        } else {
+          // Mensagem normal sem reply
+          await sock.sendMessage(gid, { text: message.trim() })
         }
-
-        await sock.sendMessage(gid, { text: message.trim() }, options)
         
         console.log(`✅ Mensagem enviada para ${gid}`)
         
