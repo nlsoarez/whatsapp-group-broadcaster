@@ -1,230 +1,134 @@
-// backend/index.js - VERSÃO DEBUG PARA INVESTIGAR QUOTED
+// backend/index.js
 import express from 'express'
 import http from 'http'
 import { Server } from 'socket.io'
-import makeWASocket, { 
-  useMultiFileAuthState, 
-  DisconnectReason,
-  fetchLatestBaileysVersion,
-  delay
-} from '@whiskeysockets/baileys'
+import makeWASocket, { useMultiFileAuthState, DisconnectReason } from '@whiskeysockets/baileys'
 import pino from 'pino'
 import cors from 'cors'
-import qrcode from 'qrcode'
-import path from 'path'
 
 const app = express()
 app.use(express.json())
 app.use(cors())
 
 const server = http.createServer(app)
-const io = new Server(server, { 
-  cors: { origin: '*' },
-  transports: ['websocket', 'polling']
-})
+const io = new Server(server, { cors: { origin: '*' } })
 
 let sock
 let ready = false
-let qrDinamic = null
-const store = { messages: {} } // cache de mensagens
-
-// Diretório de sessão
-const SESSIONS_DIR = path.join(process.cwd(), 'sessions')
-
-// ---------------------------
-// Gera QR como base64
-// ---------------------------
-async function generateQRCode(qr) {
-  try {
-    return await qrcode.toDataURL(qr)
-  } catch (error) {
-    console.error('❌ Erro ao gerar QR Code:', error)
-    return null
-  }
+const store = { 
+  messages: {},      // cache de mensagens por grupo
+  sentMessages: {}   // cache de mensagens enviadas
 }
 
 // ---------------------------
 // Inicialização do WhatsApp
 // ---------------------------
 async function startWA() {
-  try {
-    console.log('🔄 Iniciando conexão com WhatsApp...')
-    
-    const { version } = await fetchLatestBaileysVersion()
-    console.log(`📱 Usando versão do WA Web: ${version.join('.')}`)
+  const { state, saveCreds } = await useMultiFileAuthState('auth')
+  sock = makeWASocket({
+    printQRInTerminal: false,
+    auth: state,
+    logger: pino({ level: 'silent' })
+  })
 
-    const { state, saveCreds } = await useMultiFileAuthState(SESSIONS_DIR)
-    
-    sock = makeWASocket({
-      version,
-      printQRInTerminal: true,
-      auth: state,
-      logger: pino({ level: 'silent' }),
-      browser: ['WhatsApp Broadcaster', 'Chrome', '120.0.0'],
-      syncFullHistory: false,
-      markOnlineOnConnect: true
-    })
+  sock.ev.on('connection.update', ({ qr, connection }) => {
+    if (qr) io.emit('qr', { dataUrl: await generateQRCode(qr) })
+    if (connection === 'open') {
+      ready = true
+      io.emit('ready')
+      console.log('✅ WhatsApp conectado!')
+    } else if (connection === 'close') {
+      ready = false
+      io.emit('disconnected')
+      console.log('❌ Desconectado, tentando reconectar...')
+      setTimeout(startWA, 5000)
+    }
+  })
 
-    sock.ev.on('connection.update', async (update) => {
-      const { connection, lastDisconnect, qr } = update
+  sock.ev.on('creds.update', saveCreds)
 
-      if (qr) {
-        console.log('📱 QR Code gerado!')
-        qrDinamic = qr
-        const dataUrl = await generateQRCode(qr)
-        if (dataUrl) {
-          io.emit('qr', { dataUrl })
-        }
+  // Armazena TODAS as mensagens (recebidas e enviadas)
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    for (const msg of messages) {
+      const from = msg.key.remoteJid
+      
+      // Inicializa array se não existir
+      if (!store.messages[from]) store.messages[from] = []
+      
+      // Armazena a mensagem com sua key completa
+      store.messages[from].push({
+        key: msg.key,
+        message: msg.message,
+        messageTimestamp: msg.messageTimestamp,
+        pushName: msg.pushName
+      })
+      
+      // Limita o cache a 100 mensagens por grupo
+      if (store.messages[from].length > 100) {
+        store.messages[from] = store.messages[from].slice(-100)
       }
 
-      if (connection === 'open') {
-        ready = true
-        qrDinamic = null
-        io.emit('ready')
-        console.log('✅ WhatsApp conectado com sucesso!')
-        console.log(`📞 Número: ${sock.user?.id}`)
-      }
-
-      if (connection === 'close') {
-        ready = false
-        const shouldReconnect = 
-          lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut
-        
-        const statusCode = lastDisconnect?.error?.output?.statusCode
-        const reason = getDisconnectReason(statusCode)
-        
-        console.log(`❌ Desconectado: ${reason}`)
-
-        if (shouldReconnect) {
-          console.log('🔄 Tentando reconectar em 5 segundos...')
-          io.emit('disconnected')
-          setTimeout(startWA, 5000)
-        } else {
-          console.log('🚪 Logout detectado. Aguardando novo login...')
-          io.emit('logged_out')
-        }
-      }
-
-      if (connection === 'connecting') {
-        console.log('🔌 Conectando ao WhatsApp...')
-      }
-    })
-
-    sock.ev.on('creds.update', saveCreds)
-
-    // Armazena mensagens recebidas - COM ESTRUTURA COMPLETA
-    sock.ev.on('messages.upsert', async ({ messages, type }) => {
-      if (type !== 'notify') return
-
-      for (const msg of messages) {
-        if (msg.key.remoteJid === 'status@broadcast') continue
-
-        const from = msg.key.remoteJid
-        
-        if (!store.messages[from]) {
-          store.messages[from] = []
-        }
-        
-        // ✅ ARMAZENA MENSAGEM COMPLETA COM TODA ESTRUTURA
-        store.messages[from].push(msg)
-        if (store.messages[from].length > 100) {
-          store.messages[from].shift()
-        }
-
+      // Só emite evento se for mensagem recebida (não enviada por nós)
+      if (!msg.key.fromMe) {
         const text =
           msg.message?.conversation ||
           msg.message?.extendedTextMessage?.text ||
-          msg.message?.imageMessage?.caption ||
-          msg.message?.videoMessage?.caption ||
-          '(mídia sem legenda)'
-
-        const senderName = msg.pushName || 
-          msg.key.participant?.split('@')[0] || 
-          'Desconhecido'
-
-        const messageId = msg.key.id
-
-        // 🔍 DEBUG: Log completo da estrutura da mensagem
-        console.log('📩 Mensagem recebida:', {
-          from,
-          senderName,
-          text,
-          messageId,
-          hasKey: !!msg.key,
-          hasMessage: !!msg.message,
-          keyStructure: JSON.stringify(msg.key),
-          messageType: Object.keys(msg.message || {})[0]
-        })
-
+          '(mídia)'
+          
         io.emit('message', {
           groupId: from,
-          from: senderName,
+          from: msg.pushName || msg.key.participant || 'Desconhecido',
           text,
-          timestamp: (msg.messageTimestamp * 1000) || Date.now(),
-          messageId
+          timestamp: msg.messageTimestamp * 1000,
+          messageId: msg.key.id  // Adiciona ID da mensagem
         })
       }
-    })
-
-    sock.ev.on('connection.error', (error) => {
-      console.error('❌ Erro na conexão:', error)
-    })
-
-  } catch (error) {
-    console.error('❌ Erro ao iniciar WhatsApp:', error)
-    setTimeout(startWA, 10000)
-  }
-}
-
-function getDisconnectReason(statusCode) {
-  const reasons = {
-    [DisconnectReason.badSession]: 'Sessão inválida',
-    [DisconnectReason.connectionClosed]: 'Conexão fechada',
-    [DisconnectReason.connectionLost]: 'Conexão perdida',
-    [DisconnectReason.connectionReplaced]: 'Conexão substituída em outro dispositivo',
-    [DisconnectReason.loggedOut]: 'Deslogado',
-    [DisconnectReason.restartRequired]: 'Reinício necessário',
-    [DisconnectReason.timedOut]: 'Tempo esgotado',
-    [DisconnectReason.multideviceMismatch]: 'Incompatibilidade multidevice'
-  }
-  return reasons[statusCode] || `Desconhecido (${statusCode})`
-}
-
-app.get('/api/status', (req, res) => {
-  res.json({ 
-    ready, 
-    hasQR: !!qrDinamic,
-    connected: sock?.user?.id || null
+    }
   })
-})
+  
+  // Monitora mensagens enviadas por nós
+  sock.ev.on('messages.update', (updates) => {
+    for (const update of updates) {
+      if (update.key && update.status === 2) { // 2 = enviada
+        console.log('Mensagem enviada confirmada:', update.key.id)
+      }
+    }
+  })
+}
 
+// ---------------------------
+// Gera QR como base64
+// ---------------------------
+async function generateQRCode(qr) {
+  const qrcode = await import('qrcode')
+  return await qrcode.toDataURL(qr)
+}
+
+// ---------------------------
+// REST: lista grupos
+// ---------------------------
 app.get('/api/groups', async (req, res) => {
   try {
-    if (!sock || !ready) {
-      return res.status(503).json({ error: 'WhatsApp não conectado' })
-    }
-    
+    if (!sock || !ready) return res.status(503).json({ error: 'WhatsApp não conectado' })
     const groups = Object.values(await sock.groupFetchAllParticipating()).map(g => ({
       id: g.id,
-      subject: g.subject,
-      size: g.participants.length
+      subject: g.subject
     }))
-    
-    console.log(`📋 Listando ${groups.length} grupos`)
     res.json(groups)
   } catch (e) {
-    console.error('❌ Erro ao listar grupos:', e)
+    console.error(e)
     res.status(500).json({ error: 'Falha ao listar grupos' })
   }
 })
 
+// ---------------------------
+// REST: foto do grupo
+// ---------------------------
 app.get('/api/group-picture/:jid', async (req, res) => {
   try {
-    if (!sock || !ready) return res.status(503).end()
-    
+    if (!sock || !ready) return res.status(503).json({ error: 'WhatsApp não conectado' })
     const url = await sock.profilePictureUrl(req.params.jid, 'image')
     if (!url) return res.status(204).end()
-    
     res.json({ url })
   } catch {
     res.status(204).end()
@@ -232,160 +136,145 @@ app.get('/api/group-picture/:jid', async (req, res) => {
 })
 
 // ---------------------------
-// REST: envio de mensagens COM DEBUG
+// REST: envio de mensagens com resposta melhorada
 // ---------------------------
 app.post('/api/send', async (req, res) => {
   try {
     const { groupIds, message, replyTo } = req.body
-    
-    if (!sock || !ready) {
-      return res.status(503).json({ error: 'WhatsApp não conectado' })
-    }
-    
-    if (!groupIds?.length) {
-      return res.status(400).json({ error: 'Nenhum grupo selecionado' })
-    }
-    
-    if (!message?.trim()) {
-      return res.status(400).json({ error: 'Mensagem vazia' })
-    }
-
-    console.log('\n🔍 DEBUG ENVIO:')
-    console.log('Message:', message)
-    console.log('ReplyTo:', JSON.stringify(replyTo, null, 2))
+    if (!sock || !ready) return res.status(503).json({ error: 'WhatsApp não conectado' })
+    if (!groupIds?.length) return res.status(400).json({ error: 'Nenhum grupo selecionado' })
+    if (!message) return res.status(400).json({ error: 'Mensagem vazia' })
 
     const results = []
     
     for (const gid of groupIds) {
+      let sentMessage = null
+      
       try {
-        // TENTATIVA COM QUOTED
-        if (replyTo?.groupId && replyTo?.messageId) {
-          const msgs = store.messages[replyTo.groupId] || []
+        // Se for uma resposta
+        if (replyTo?.groupId === gid && replyTo?.messageId) {
+          // Busca a mensagem original pelo ID
+          const groupMessages = store.messages[gid] || []
+          const originalMsg = groupMessages.find(m => m.key.id === replyTo.messageId)
           
-          console.log(`\n🔍 Buscando mensagem para reply:`)
-          console.log(`- Grupo: ${replyTo.groupId}`)
-          console.log(`- MessageId: ${replyTo.messageId}`)
-          console.log(`- Total msgs no cache: ${msgs.length}`)
-          
-          const original = msgs.find(m => m.key.id === replyTo.messageId)
-          
-          if (original) {
-            console.log(`✅ Mensagem original encontrada!`)
-            console.log(`- Estrutura key:`, JSON.stringify(original.key, null, 2))
-            console.log(`- Tipo mensagem:`, Object.keys(original.message || {}))
-            
-            try {
-              // MÉTODO 1: Quoted direto
-              console.log('\n🧪 TESTE 1: Enviando com quoted no 3º parâmetro...')
-              await sock.sendMessage(gid, { 
-                text: message.trim() 
-              }, { 
-                quoted: original 
-              })
-              console.log('✅ TESTE 1: Sucesso!')
-              
-            } catch (error) {
-              console.error('❌ TESTE 1 falhou:', error.message)
-              
-              // MÉTODO 2: Fallback - construir contextInfo manualmente
-              try {
-                console.log('\n🧪 TESTE 2: Enviando com contextInfo manual...')
-                await sock.sendMessage(gid, {
-                  text: message.trim(),
-                  contextInfo: {
-                    stanzaId: original.key.id,
-                    participant: original.key.participant || original.key.remoteJid,
-                    quotedMessage: original.message
-                  }
-                })
-                console.log('✅ TESTE 2: Sucesso!')
-              } catch (error2) {
-                console.error('❌ TESTE 2 também falhou:', error2.message)
-                throw error2
-              }
-            }
-            
+          if (originalMsg) {
+            // Envia como resposta real do WhatsApp
+            sentMessage = await sock.sendMessage(gid, 
+              { text: message },
+              { quoted: originalMsg }
+            )
+            console.log(`✅ Resposta enviada para ${gid} referenciando mensagem ${replyTo.messageId}`)
           } else {
-            console.log(`⚠️ Mensagem original NÃO encontrada`)
-            console.log(`IDs disponíveis no cache:`, msgs.map(m => m.key.id).slice(-5))
-            
-            // Envia sem reply
-            await sock.sendMessage(gid, { text: message.trim() })
+            // Se não encontrar a mensagem original, envia normal mas com contexto
+            console.log(`⚠️ Mensagem original não encontrada no cache para ${gid}`)
+            sentMessage = await sock.sendMessage(gid, { 
+              text: `↩️ Em resposta a: "${replyTo.text}"\n\n${message}` 
+            })
+          }
+        } else if (replyTo?.text && !replyTo?.messageId) {
+          // Busca por texto (backward compatibility)
+          const groupMessages = store.messages[gid] || []
+          const originalMsg = groupMessages.find(m => {
+            const msgText = m.message?.conversation || 
+                          m.message?.extendedTextMessage?.text
+            return msgText === replyTo.text
+          })
+          
+          if (originalMsg) {
+            sentMessage = await sock.sendMessage(gid, 
+              { text: message },
+              { quoted: originalMsg }
+            )
+            console.log(`✅ Resposta enviada por match de texto para ${gid}`)
+          } else {
+            // Fallback com indicação visual
+            sentMessage = await sock.sendMessage(gid, { 
+              text: `↩️ Em resposta a: "${replyTo.text}"\n\n${message}` 
+            })
           }
         } else {
-          // Mensagem normal sem reply
-          console.log('📤 Enviando mensagem normal (sem reply)')
-          await sock.sendMessage(gid, { text: message.trim() })
+          // Mensagem normal (não é resposta)
+          sentMessage = await sock.sendMessage(gid, { text: message })
         }
         
-        console.log(`✅ Mensagem enviada para ${gid}`)
+        // Armazena mensagem enviada no cache
+        if (sentMessage) {
+          if (!store.sentMessages[gid]) store.sentMessages[gid] = []
+          store.sentMessages[gid].push({
+            key: sentMessage.key,
+            message: { conversation: message },
+            messageTimestamp: Date.now() / 1000
+          })
+          
+          // Também adiciona ao cache principal
+          if (!store.messages[gid]) store.messages[gid] = []
+          store.messages[gid].push({
+            key: sentMessage.key,
+            message: { conversation: message },
+            messageTimestamp: Date.now() / 1000
+          })
+        }
         
+        // Emite evento de mensagem enviada
         io.emit('message_sent', { 
           groupId: gid, 
           text: message, 
           timestamp: Date.now(),
-          replyTo: replyTo || null
+          messageId: sentMessage?.key?.id,
+          isReply: !!replyTo
         })
         
-        results.push({ groupId: gid, success: true })
-        
-        await delay(1000)
+        results.push({ groupId: gid, success: true, messageId: sentMessage?.key?.id })
         
       } catch (error) {
-        console.error(`❌ Erro ao enviar para ${gid}:`, error)
+        console.error(`Erro ao enviar para ${gid}:`, error)
         results.push({ groupId: gid, success: false, error: error.message })
       }
     }
 
     res.json({ ok: true, results })
-    
   } catch (e) {
-    console.error('❌ Erro no envio:', e)
-    res.status(500).json({ error: 'Falha ao enviar mensagem' })
+    console.error('Erro geral no envio:', e)
+    res.status(500).json({ error: 'Falha ao enviar mensagem', details: e.message })
   }
 })
 
-io.on('connection', (socket) => {
+// ---------------------------
+// REST: debug - ver cache de mensagens
+// ---------------------------
+app.get('/api/debug/cache/:groupId', async (req, res) => {
+  const { groupId } = req.params
+  const messages = store.messages[groupId] || []
+  res.json({
+    groupId,
+    totalMessages: messages.length,
+    messages: messages.slice(-10).map(m => ({
+      id: m.key?.id,
+      text: m.message?.conversation || m.message?.extendedTextMessage?.text,
+      fromMe: m.key?.fromMe,
+      timestamp: m.messageTimestamp
+    }))
+  })
+})
+
+// ---------------------------
+// Socket.IO: status sob demanda
+// ---------------------------
+io.on('connection', socket => {
+  socket.emit('status', { ready })
   console.log('🔌 Cliente conectado via Socket.IO')
   
-  socket.emit('status', { ready })
-  
-  if (qrDinamic) {
-    generateQRCode(qrDinamic).then(dataUrl => {
-      if (dataUrl) socket.emit('qr', { dataUrl })
-    })
-  }
-
   socket.on('disconnect', () => {
     console.log('🔌 Cliente desconectado')
   })
 })
 
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    whatsapp: ready ? 'connected' : 'disconnected',
-    uptime: process.uptime()
-  })
-})
-
+// ---------------------------
+// Inicialização do servidor
+// ---------------------------
 const PORT = process.env.PORT || 3000
-
 server.listen(PORT, async () => {
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-  console.log('🚀 WhatsApp Group Broadcaster')
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-  console.log(`📡 Servidor rodando na porta ${PORT}`)
-  console.log(`🌍 Ambiente: ${process.env.NODE_ENV || 'development'}`)
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-  
+  console.log(`🚀 Servidor iniciado na porta ${PORT}`)
+  console.log(`📊 Debug disponível em http://localhost:${PORT}/api/debug/cache/{groupId}`)
   await startWA()
-})
-
-process.on('unhandledRejection', (error) => {
-  console.error('❌ Unhandled Rejection:', error)
-})
-
-process.on('uncaughtException', (error) => {
-  console.error('❌ Uncaught Exception:', error)
 })
