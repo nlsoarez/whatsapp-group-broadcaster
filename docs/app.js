@@ -1,4 +1,4 @@
-// docs/app.js
+// app.js - Sistema Profissional com Monitoramento Avançado
 document.addEventListener('DOMContentLoaded', () => {
   const socket = io(window.BACKEND_URL, {
     transports: ['websocket', 'polling'],
@@ -9,324 +9,407 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const el = {
     qr: document.getElementById('qr'),
-    status: document.getElementById('wa-status'),
+    status: document.getElementById('status-text'),
+    statusDot: document.getElementById('status-dot'),
     groups: document.getElementById('groups'),
+    groupsCount: document.getElementById('groups-count'),
+    selectedCount: document.getElementById('selected-count'),
     chats: document.getElementById('chats'),
     message: document.getElementById('message'),
     send: document.getElementById('send'),
-    qrCard: document.getElementById('qr-card')
+    qrCard: document.getElementById('qr-card'),
+    charCount: document.getElementById('char-count'),
+    sentCount: document.getElementById('sent-count'),
+    deliveredCount: document.getElementById('delivered-count'),
+    readCount: document.getElementById('read-count'),
+    groupSearch: document.getElementById('group-search'),
+    replyBox: document.getElementById('reply-indicator-box'),
+    replyPreview: document.getElementById('reply-preview'),
+    resetBtn: document.getElementById('reset-session-btn')
   };
 
   const state = {
     groups: [],
+    filteredGroups: [],
     selected: new Set(),
     chatByGroup: new Map(),
     messageIdMap: new Map(),
     replyingTo: null,
-    connectionAttempts: 0
+    stats: {
+      sent: 0,
+      delivered: 0,
+      read: 0
+    },
+    messageHistory: new Map(), // Histórico completo
+    historyTimeLimit: 5 * 60 * 60 * 1000 // 5 horas em ms
   };
+
+  // --- Inicialização ---
+  initializeEventListeners();
+  requestInitialData();
 
   // --- Funções de UI ---
   function setQR(url) {
     if (url) {
-      el.qr.innerHTML = `<img src="${url}" alt="QR Code" class="w-full h-full object-contain rounded-lg" />`;
-      setStatus('Escaneie o QR Code com seu WhatsApp', false);
+      el.qr.innerHTML = `
+        <img src="${url}" alt="QR Code" class="w-full h-full object-contain rounded-lg animate-fadeIn" />
+      `;
     } else {
-      el.qr.innerHTML = '<span class="text-gray-500 text-sm">Aguardando QR...</span>';
+      el.qr.innerHTML = '<div class="loading-skeleton w-full h-full rounded-lg"></div>';
     }
   }
 
-  function setStatus(text, ok) {
-    el.status.innerHTML = `
-      <span class="${ok ? 'text-emerald-600' : 'text-amber-600'} flex items-center gap-2">
-        ${ok ? 
-          '<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path></svg>' : 
-          '<svg class="w-4 h-4 animate-pulse" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path></svg>'
-        }
-        ${text}
-      </span>
-    `;
-  }
-
-  function addResetButton() {
-    // Remove botão existente se houver
-    const existingBtn = document.getElementById('reset-session-btn');
-    if (existingBtn) existingBtn.remove();
+  function setStatus(text, connected) {
+    el.status.textContent = text;
+    el.statusDot.className = connected 
+      ? 'w-2 h-2 rounded-full bg-green-500 pulse-dot' 
+      : 'w-2 h-2 rounded-full bg-red-500 pulse-dot';
     
-    // Adiciona botão de reset no card do QR
-    const resetBtn = document.createElement('button');
-    resetBtn.id = 'reset-session-btn';
-    resetBtn.className = 'mt-3 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium transition-all w-full';
-    resetBtn.innerHTML = '🔄 Gerar Novo QR Code';
-    resetBtn.onclick = async () => {
-      if (confirm('Isso desconectará a sessão atual. Continuar?')) {
-        resetBtn.disabled = true;
-        resetBtn.innerHTML = '<span class="animate-pulse">Resetando...</span>';
-        
-        try {
-          const response = await fetch(`${window.BACKEND_URL}/api/reset-session`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
-          });
-          
-          if (response.ok) {
-            showToast('Sessão resetada! Aguarde novo QR...', 'success');
-            el.qr.innerHTML = '<span class="text-gray-500 text-sm animate-pulse">Gerando novo QR...</span>';
-            setStatus('Gerando novo QR Code...', false);
-          } else {
-            throw new Error('Falha ao resetar sessão');
-          }
-        } catch (error) {
-          showToast('Erro ao resetar: ' + error.message, 'error');
-          resetBtn.disabled = false;
-          resetBtn.innerHTML = '🔄 Gerar Novo QR Code';
-        }
-      }
-    };
-    
-    const qrCard = document.getElementById('qr-card');
-    if (qrCard && !qrCard.classList.contains('hidden')) {
-      qrCard.appendChild(resetBtn);
+    // Atualiza badge do status
+    const badge = document.getElementById('connection-status');
+    if (connected) {
+      badge.classList.remove('glass-dark');
+      badge.classList.add('bg-green-50', 'border-green-200');
+    } else {
+      badge.classList.remove('bg-green-50', 'border-green-200');
+      badge.classList.add('glass-dark');
     }
   }
 
   function renderGroups() {
     el.groups.innerHTML = '';
     
-    if (state.groups.length === 0) {
-      el.groups.innerHTML = '<div class="text-gray-500 text-center py-8">Nenhum grupo disponível</div>';
+    if (state.filteredGroups.length === 0) {
+      el.groups.innerHTML = `
+        <div class="text-center py-8 text-gray-500">
+          ${state.groups.length === 0 ? 'Nenhum grupo disponível' : 'Nenhum grupo encontrado'}
+        </div>
+      `;
       return;
     }
     
-    for (const g of state.groups) {
+    state.filteredGroups.forEach(g => {
       const div = document.createElement('div');
-      div.className = 'flex items-center space-x-2 border rounded-lg p-2 hover:bg-slate-50 cursor-pointer transition-all';
-
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.className = 'w-4 h-4 accent-red-600';
-      checkbox.checked = state.selected.has(g.id);
-      checkbox.onchange = (e) => {
-        e.stopPropagation();
-        if (checkbox.checked) state.selected.add(g.id);
-        else state.selected.delete(g.id);
-        updateSelectedCount();
-      };
-
-      const img = document.createElement('img');
-      img.className = 'w-8 h-8 rounded-full object-cover bg-gray-200';
-      img.onerror = () => { 
-        img.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23999"%3E%3Cpath d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/%3E%3C/svg%3E'; 
+      div.className = 'group-item flex items-center gap-3 p-3 bg-white/50 hover:bg-white/70 rounded-xl cursor-pointer transition-all';
+      
+      const isSelected = state.selected.has(g.id);
+      
+      div.innerHTML = `
+        <div class="relative">
+          <input type="checkbox" 
+            id="group-${g.id}" 
+            class="peer sr-only"
+            ${isSelected ? 'checked' : ''}
+          >
+          <div class="w-5 h-5 rounded border-2 ${isSelected ? 'border-purple-500 bg-purple-500' : 'border-gray-300 bg-white'} transition-all flex items-center justify-center">
+            ${isSelected ? '<svg class="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg>' : ''}
+          </div>
+        </div>
+        
+        <img 
+          src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23999'%3E%3Cpath d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z'/%3E%3C/svg%3E"
+          class="w-10 h-10 rounded-full object-cover bg-gray-100 group-picture"
+          data-group-id="${g.id}"
+        >
+        
+        <div class="flex-1 min-w-0">
+          <p class="font-medium text-gray-800 truncate">${escapeHtml(g.subject)}</p>
+          <p class="text-xs text-gray-500">${g.participants || 0} participantes</p>
+        </div>
+        
+        ${state.chatByGroup.has(g.id) ? `
+          <div class="px-2 py-1 bg-purple-100 text-purple-700 rounded-full text-xs font-medium">
+            ${state.chatByGroup.get(g.id).length}
+          </div>
+        ` : ''}
+      `;
+      
+      // Click handler
+      div.onclick = (e) => {
+        const checkbox = div.querySelector('input[type="checkbox"]');
+        checkbox.checked = !checkbox.checked;
+        
+        if (checkbox.checked) {
+          state.selected.add(g.id);
+          loadGroupHistory(g.id); // Carrega histórico ao selecionar
+        } else {
+          state.selected.delete(g.id);
+        }
+        
+        updateUI();
+        renderChats(); // Re-renderiza chats
       };
       
-      fetch(`${window.BACKEND_URL}/api/group-picture/${g.id}`)
-        .then(r => r.ok ? r.json() : null)
-        .then(d => { if (d?.url) img.src = d.url; })
-        .catch(() => {});
-
-      const info = document.createElement('div');
-      info.className = 'flex-1';
-      info.innerHTML = `
-        <div class="text-sm font-medium truncate">${g.subject}</div>
-        ${g.participants ? `<div class="text-xs text-gray-500">${g.participants} participantes</div>` : ''}
-      `;
-
-      div.onclick = (e) => {
-        if (e.target !== checkbox) {
-          checkbox.checked = !checkbox.checked;
-          checkbox.onchange(e);
-        }
-      };
-
-      div.appendChild(checkbox);
-      div.appendChild(img);
-      div.appendChild(info);
       el.groups.appendChild(div);
-    }
-    updateSelectedCount();
+      
+      // Carrega foto do grupo
+      loadGroupPicture(g.id);
+    });
+    
+    updateUI();
   }
 
-  function updateSelectedCount() {
-    const count = state.selected.size;
-    const sendBtn = document.getElementById('send');
-    if (count > 0) {
-      sendBtn.textContent = `Enviar para ${count} grupo${count > 1 ? 's' : ''}`;
-      sendBtn.classList.remove('opacity-50');
-    } else {
-      sendBtn.textContent = 'Enviar para grupos selecionados';
-      sendBtn.classList.add('opacity-50');
-    }
-  }
-
-  async function fetchGroups() {
+  async function loadGroupPicture(groupId) {
     try {
-      const r = await fetch(`${window.BACKEND_URL}/api/groups`);
-      const data = await r.json();
-      if (r.ok) {
-        state.groups = data;
-        renderGroups();
-        if (data.length > 0) {
-          showToast(`${data.length} grupos carregados`, 'success');
+      const response = await fetch(`${window.BACKEND_URL}/api/group-picture/${groupId}`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.url) {
+          const img = document.querySelector(`.group-picture[data-group-id="${groupId}"]`);
+          if (img) img.src = data.url;
         }
-      } else {
-        throw new Error(data.error || 'Falha ao buscar grupos');
       }
-    } catch (e) {
-      console.error('Erro ao buscar grupos:', e);
-      el.groups.innerHTML = `
-        <div class="text-red-500 text-center py-8">
-          <p>Erro ao carregar grupos</p>
-          <button onclick="location.reload()" class="mt-2 text-sm underline">Recarregar página</button>
-        </div>
-      `;
+    } catch (error) {
+      console.error('Erro ao carregar foto:', error);
     }
   }
 
-  // --- Chat visual ---
-  function pushChat(groupId, who, text, ts, messageId, replyText) {
-    if (!state.chatByGroup.has(groupId)) state.chatByGroup.set(groupId, []);
-    const chatEntry = { who, text, ts, messageId, replyText };
-    state.chatByGroup.get(groupId).push(chatEntry);
+  async function loadGroupHistory(groupId) {
+    try {
+      const response = await fetch(`${window.BACKEND_URL}/api/group-history/${groupId}`);
+      if (response.ok) {
+        const messages = await response.json();
+        
+        // Filtra mensagens das últimas 5 horas
+        const fiveHoursAgo = Date.now() - state.historyTimeLimit;
+        const recentMessages = messages.filter(m => m.timestamp > fiveHoursAgo);
+        
+        // Adiciona ao histórico
+        if (!state.messageHistory.has(groupId)) {
+          state.messageHistory.set(groupId, []);
+        }
+        
+        recentMessages.forEach(msg => {
+          pushChat(groupId, msg.from, msg.text, msg.timestamp, msg.messageId, null, true);
+        });
+        
+        renderChats();
+      }
+    } catch (error) {
+      console.error('Erro ao carregar histórico:', error);
+    }
+  }
+
+  function updateUI() {
+    // Atualiza contadores
+    el.groupsCount.textContent = `${state.groups.length} grupos disponíveis`;
+    el.selectedCount.textContent = state.selected.size;
+    
+    // Atualiza botão de enviar
+    const count = state.selected.size;
+    if (count > 0) {
+      el.send.innerHTML = `
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
+        </svg>
+        <span>Enviar para ${count} grupo${count > 1 ? 's' : ''}</span>
+      `;
+      el.send.classList.remove('opacity-50', 'cursor-not-allowed');
+    } else {
+      el.send.innerHTML = `
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
+        </svg>
+        <span>Selecione grupos primeiro</span>
+      `;
+      el.send.classList.add('opacity-50', 'cursor-not-allowed');
+    }
+    
+    // Atualiza stats
+    el.sentCount.textContent = state.stats.sent;
+    el.deliveredCount.textContent = state.stats.delivered;
+    el.readCount.textContent = state.stats.read;
+  }
+
+  // --- Sistema de Chat Avançado ---
+  function pushChat(groupId, who, text, ts, messageId, replyText, isHistory = false) {
+    // Só adiciona se o grupo estiver selecionado
+    if (!state.selected.has(groupId) && !isHistory) return;
+    
+    if (!state.chatByGroup.has(groupId)) {
+      state.chatByGroup.set(groupId, []);
+    }
+    
+    const chat = state.chatByGroup.get(groupId);
+    
+    // Evita duplicatas
+    const exists = chat.some(m => m.messageId === messageId && messageId);
+    if (!exists) {
+      chat.push({ who, text, ts, messageId, replyText });
+      
+      // Limita a 100 mensagens por grupo
+      if (chat.length > 100) {
+        state.chatByGroup.set(groupId, chat.slice(-100));
+      }
+    }
     
     if (messageId && groupId) {
-      const key = `${groupId}:${text}`;
-      state.messageIdMap.set(key, messageId);
+      state.messageIdMap.set(`${groupId}:${text}`, messageId);
     }
     
-    renderChats();
+    if (!isHistory) {
+      renderChats();
+    }
   }
 
   function renderChats() {
     el.chats.innerHTML = '';
     
-    if (state.chatByGroup.size === 0) {
-      el.chats.innerHTML = '<div class="text-gray-500 text-center py-8">Nenhuma mensagem ainda...</div>';
+    // Filtra apenas grupos selecionados
+    const selectedGroups = Array.from(state.selected);
+    
+    if (selectedGroups.length === 0) {
+      el.chats.innerHTML = `
+        <div class="glass-dark rounded-xl p-6 flex flex-col items-center justify-center min-h-[300px]">
+          <svg class="w-16 h-16 text-gray-400 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+          </svg>
+          <p class="text-gray-500 text-center">
+            Selecione grupos para monitorar<br>
+            <span class="text-xs">As mensagens aparecerão aqui</span>
+          </p>
+        </div>
+      `;
       return;
     }
     
-    for (const [gid, msgs] of state.chatByGroup.entries()) {
-      const group = state.groups.find(g => g.id === gid);
-      const card = document.createElement('div');
-      card.className = 'border rounded-lg p-3 bg-white';
+    // Renderiza chats dos grupos selecionados
+    selectedGroups.forEach(groupId => {
+      const messages = state.chatByGroup.get(groupId) || [];
+      const group = state.groups.find(g => g.id === groupId);
       
-      const header = document.createElement('div');
-      header.className = 'flex items-center justify-between mb-3 pb-2 border-b';
-      header.innerHTML = `
-        <div class="font-semibold text-gray-800">${group ? group.subject : 'Grupo'}</div>
-        <div class="text-xs text-gray-500">${msgs.length} mensagens</div>
+      if (messages.length === 0) return;
+      
+      const chatCard = document.createElement('div');
+      chatCard.className = 'glass-dark rounded-xl p-4';
+      
+      // Header do grupo
+      const header = `
+        <div class="flex items-center justify-between mb-3 pb-2 border-b border-gray-200">
+          <div class="flex items-center gap-2">
+            <div class="w-2 h-2 bg-green-500 rounded-full"></div>
+            <h3 class="font-semibold text-gray-800">${escapeHtml(group?.subject || 'Grupo')}</h3>
+          </div>
+          <span class="text-xs text-gray-500">${messages.length} mensagens</span>
+        </div>
       `;
-      card.appendChild(header);
-
-      const messagesContainer = document.createElement('div');
-      messagesContainer.className = 'space-y-1 max-h-60 overflow-y-auto scrollbar-thin';
       
-      for (const m of msgs.slice(-50)) {
-        const msgDiv = document.createElement('div');
+      // Container de mensagens
+      const messagesHtml = messages.slice(-20).map(m => {
         const isMe = m.who === 'Você';
-        msgDiv.className = `text-sm p-2 rounded-lg cursor-pointer transition-all ${
-          isMe ? 'bg-green-50 ml-auto max-w-[80%] hover:bg-green-100' : 'bg-gray-50 mr-auto max-w-[80%] hover:bg-gray-100'
-        }`;
+        const time = new Date(m.ts).toLocaleTimeString('pt-BR', { 
+          hour: '2-digit', 
+          minute: '2-digit' 
+        });
         
-        const time = new Date(m.ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-
-        let content = '';
-        if (m.replyText) {
-          content = `
-            <div class="text-xs text-gray-500 bg-white/50 rounded p-1 mb-1 italic border-l-2 border-blue-400 pl-2">
-              ↩️ ${m.replyText.substring(0, 50)}${m.replyText.length > 50 ? '...' : ''}
+        return `
+          <div class="message-bubble mb-2 ${isMe ? 'text-right' : ''}" 
+               data-message-id="${m.messageId}"
+               data-group-id="${groupId}">
+            <div class="inline-block max-w-[80%] ${
+              isMe 
+                ? 'bg-gradient-to-r from-purple-500 to-indigo-500 text-white' 
+                : 'bg-white text-gray-800'
+            } rounded-2xl px-4 py-2 shadow-md cursor-pointer hover:shadow-lg transition-shadow">
+              ${m.replyText ? `
+                <div class="text-xs ${isMe ? 'text-purple-100' : 'text-gray-500'} mb-1 italic border-l-2 ${isMe ? 'border-purple-300' : 'border-gray-300'} pl-2">
+                  ↩️ ${escapeHtml(m.replyText.substring(0, 50))}${m.replyText.length > 50 ? '...' : ''}
+                </div>
+              ` : ''}
+              ${!isMe ? `<p class="text-xs font-semibold ${isMe ? 'text-purple-100' : 'text-purple-600'} mb-1">${escapeHtml(m.who)}</p>` : ''}
+              <p class="text-sm break-words">${escapeHtml(m.text)}</p>
+              <p class="text-xs ${isMe ? 'text-purple-100' : 'text-gray-400'} mt-1">${time}</p>
             </div>
-          `;
-        }
-        
-        content += `
-          <div class="flex items-start gap-2">
-            <div class="flex-1">
-              ${!isMe ? `<div class="font-semibold text-xs text-gray-600 mb-1">${m.who}</div>` : ''}
-              <div class="text-gray-800 break-words">${m.text}</div>
-            </div>
-            <div class="text-[10px] text-gray-400 mt-auto">${time}</div>
           </div>
         `;
-        
-        msgDiv.innerHTML = content;
-
-        msgDiv.onclick = () => {
-          if (state.replyingTo) {
-            el.message.value = el.message.value.replace(/^↩️ Respondendo a: .+\n\n/, '');
-          }
-          
-          state.replyingTo = { 
-            groupId: gid, 
-            text: m.text, 
-            from: m.who,
-            messageId: m.messageId || state.messageIdMap.get(`${gid}:${m.text}`)
-          };
-          
-          document.querySelectorAll('.replying-to').forEach(el => el.classList.remove('replying-to', 'ring-2', 'ring-blue-400'));
-          msgDiv.classList.add('replying-to', 'ring-2', 'ring-blue-400');
-          
-          const currentText = el.message.value;
-          el.message.value = `↩️ Respondendo a: ${m.who} - "${m.text.substring(0, 50)}${m.text.length > 50 ? '...' : ''}"\n\n${currentText}`;
-          el.message.focus();
-          el.message.setSelectionRange(el.message.value.length, el.message.value.length);
-          
-          showReplyIndicator(m.who, m.text);
-        };
-
-        messagesContainer.appendChild(msgDiv);
-      }
+      }).join('');
       
-      card.appendChild(messagesContainer);
-      el.chats.appendChild(card);
-    }
-    
-    const lastContainer = el.chats.lastElementChild?.querySelector('.overflow-y-auto');
-    if (lastContainer) {
-      lastContainer.scrollTop = lastContainer.scrollHeight;
-    }
-  }
-
-  function showReplyIndicator(from, text) {
-    const existingIndicator = document.getElementById('reply-indicator');
-    if (existingIndicator) existingIndicator.remove();
-    
-    const indicator = document.createElement('div');
-    indicator.id = 'reply-indicator';
-    indicator.className = 'fixed bottom-20 right-6 bg-white shadow-lg rounded-lg p-3 max-w-sm border-l-4 border-blue-500 z-50 animate-pulse';
-    indicator.innerHTML = `
-      <div class="flex items-center justify-between">
-        <div class="flex-1">
-          <div class="text-xs text-gray-500 mb-1">Respondendo a ${from}:</div>
-          <div class="text-sm text-gray-700">"${text.substring(0, 100)}${text.length > 100 ? '...' : ''}"</div>
+      chatCard.innerHTML = header + `
+        <div class="max-h-[400px] overflow-y-auto scrollbar-thin pr-2">
+          ${messagesHtml}
         </div>
-        <button onclick="cancelReply()" class="ml-3 text-gray-400 hover:text-gray-600">
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
-    `;
-    document.body.appendChild(indicator);
-    
-    setTimeout(() => {
-      if (document.getElementById('reply-indicator')) {
-        indicator.classList.remove('animate-pulse');
+      `;
+      
+      // Adiciona event listeners para reply
+      chatCard.querySelectorAll('.message-bubble').forEach(bubble => {
+        bubble.onclick = () => {
+          const messageEl = bubble.querySelector('.inline-block');
+          const messageText = bubble.querySelector('p.text-sm').textContent;
+          const sender = bubble.querySelector('p.font-semibold')?.textContent || 'Você';
+          const messageId = bubble.dataset.messageId;
+          
+          setReply({
+            groupId: groupId,
+            text: messageText,
+            from: sender,
+            messageId: messageId
+          });
+          
+          // Visual feedback
+          document.querySelectorAll('.message-bubble .inline-block').forEach(el => {
+            el.classList.remove('ring-2', 'ring-purple-400');
+          });
+          messageEl.classList.add('ring-2', 'ring-purple-400');
+        };
+      });
+      
+      el.chats.appendChild(chatCard);
+      
+      // Auto scroll
+      const scrollContainer = chatCard.querySelector('.overflow-y-auto');
+      if (scrollContainer) {
+        scrollContainer.scrollTop = scrollContainer.scrollHeight;
       }
-    }, 2000);
+    });
   }
 
-  window.cancelReply = function() {
-    state.replyingTo = null;
-    el.message.value = el.message.value.replace(/^↩️ Respondendo a: .+\n\n/, '');
-    document.getElementById('reply-indicator')?.remove();
-    document.querySelectorAll('.replying-to').forEach(el => {
-      el.classList.remove('replying-to', 'ring-2', 'ring-blue-400');
-    });
-  };
+  function setReply(replyInfo) {
+    state.replyingTo = replyInfo;
+    
+    el.replyBox.classList.remove('hidden');
+    el.replyPreview.innerHTML = `
+      <span class="font-medium">${escapeHtml(replyInfo.from)}</span>: 
+      "${escapeHtml(replyInfo.text.substring(0, 100))}${replyInfo.text.length > 100 ? '...' : ''}"
+    `;
+    
+    el.message.focus();
+  }
 
-  // --- Envio de mensagens ---
-  el.send.addEventListener('click', async () => {
-    let text = el.message.value.replace(/^↩️ Respondendo a: .+\n\n/, '').trim();
+  // --- Event Listeners ---
+  function initializeEventListeners() {
+    // Pesquisa de grupos
+    el.groupSearch.addEventListener('input', (e) => {
+      const search = e.target.value.toLowerCase();
+      state.filteredGroups = state.groups.filter(g => 
+        g.subject.toLowerCase().includes(search)
+      );
+      renderGroups();
+    });
+
+    // Contador de caracteres
+    el.message.addEventListener('input', () => {
+      el.charCount.textContent = el.message.value.length;
+    });
+
+    // Enviar mensagem
+    el.send.addEventListener('click', sendMessage);
+
+    // Atalhos de teclado
+    document.addEventListener('keydown', (e) => {
+      if (e.ctrlKey && e.key === 'Enter') {
+        sendMessage();
+      }
+      if (e.key === 'Escape') {
+        window.cancelReplyFunction();
+      }
+    });
+
+    // Reset session
+    el.resetBtn.addEventListener('click', resetSession);
+  }
+
+  async function sendMessage() {
+    const text = el.message.value.trim();
     
     if (!text) {
       showToast('Digite uma mensagem', 'error');
@@ -335,11 +418,15 @@ document.addEventListener('DOMContentLoaded', () => {
     
     const ids = Array.from(state.selected);
     if (!ids.length) {
-      showToast('Selecione pelo menos um grupo', 'error');
+      showToast('Selecione pelo menos um grupo', 'warning');
       return;
     }
 
-    const payload = { groupIds: ids, message: text };
+    const payload = { 
+      groupIds: ids, 
+      message: text 
+    };
+    
     if (state.replyingTo) {
       payload.replyTo = state.replyingTo;
     }
@@ -348,159 +435,212 @@ document.addEventListener('DOMContentLoaded', () => {
     el.send.innerHTML = '<span class="animate-pulse">Enviando...</span>';
     
     try {
-      const r = await fetch(`${window.BACKEND_URL}/api/send`, {
+      const response = await fetch(`${window.BACKEND_URL}/api/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      const data = await r.json();
       
-      if (!r.ok || !data.ok) throw new Error(data.error || 'Falha no envio');
-
-      const now = Date.now();
+      const data = await response.json();
       
-      if (data.results) {
-        let successCount = 0;
-        for (const result of data.results) {
-          if (result.success) {
-            successCount++;
-            pushChat(
-              result.groupId, 
-              'Você', 
-              text, 
-              now,
-              result.messageId,
-              state.replyingTo ? state.replyingTo.text : null
-            );
-          }
-        }
-        showToast(`Enviado para ${successCount}/${ids.length} grupos`, successCount === ids.length ? 'success' : 'warning');
-      } else {
-        for (const gid of ids) {
-          pushChat(gid, 'Você', text, now, null, state.replyingTo ? state.replyingTo.text : null);
-        }
-        showToast(`Mensagem enviada!`, 'success');
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error || 'Falha no envio');
       }
 
-      el.message.value = '';
-      state.replyingTo = null;
-      window.cancelReply();
+      // Atualiza stats
+      state.stats.sent += ids.length;
       
-    } catch (e) {
-      showToast('Erro: ' + e.message, 'error');
+      // Adiciona mensagem aos chats
+      const now = Date.now();
+      ids.forEach(groupId => {
+        pushChat(groupId, 'Você', text, now, null, state.replyingTo?.text);
+      });
+
+      // Limpa campos
+      el.message.value = '';
+      el.charCount.textContent = '0';
+      window.cancelReplyFunction();
+      
+      // Feedback
+      if (data.summary) {
+        showToast(
+          `✅ ${data.summary.success}/${data.summary.total} enviados, ${data.summary.replies} como reply`,
+          'success'
+        );
+      } else {
+        showToast('Mensagem enviada com sucesso!', 'success');
+      }
+      
+      updateUI();
+      
+    } catch (error) {
+      showToast(`Erro: ${error.message}`, 'error');
     } finally {
       el.send.disabled = false;
-      updateSelectedCount();
+      updateUI();
     }
-  });
-
-  // Toast notifications
-  function showToast(message, type = 'info') {
-    const existingToasts = document.querySelectorAll('.toast-notification');
-    const offset = existingToasts.length * 60;
-    
-    const toast = document.createElement('div');
-    toast.className = `toast-notification fixed right-4 px-4 py-2 rounded-lg shadow-lg z-50 transition-all ${
-      type === 'success' ? 'bg-green-500 text-white' :
-      type === 'error' ? 'bg-red-500 text-white' :
-      type === 'warning' ? 'bg-amber-500 text-white' :
-      'bg-blue-500 text-white'
-    }`;
-    toast.style.top = `${20 + offset}px`;
-    toast.textContent = message;
-    document.body.appendChild(toast);
-    
-    setTimeout(() => {
-      toast.style.opacity = '0';
-      setTimeout(() => toast.remove(), 300);
-    }, 3000);
   }
 
-  // --- Eventos Socket.IO ---
+  async function resetSession() {
+    if (!confirm('Isso desconectará a sessão atual. Continuar?')) return;
+    
+    el.resetBtn.disabled = true;
+    el.resetBtn.innerHTML = '<span class="animate-pulse">Resetando...</span>';
+    
+    try {
+      const response = await fetch(`${window.BACKEND_URL}/api/reset-session`, {
+        method: 'POST'
+      });
+      
+      if (response.ok) {
+        showToast('Sessão resetada! Aguarde novo QR...', 'success');
+        el.qr.innerHTML = '<div class="loading-skeleton w-full h-full rounded-lg"></div>';
+      } else {
+        throw new Error('Falha ao resetar');
+      }
+    } catch (error) {
+      showToast(`Erro: ${error.message}`, 'error');
+    } finally {
+      el.resetBtn.disabled = false;
+      el.resetBtn.innerHTML = `
+        <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+        </svg>
+        Gerar Novo QR Code
+      `;
+    }
+  }
+
+  async function requestInitialData() {
+    socket.emit('request-status');
+    
+    // Tenta buscar grupos se já conectado
+    try {
+      const response = await fetch(`${window.BACKEND_URL}/api/groups`);
+      if (response.ok) {
+        const groups = await response.json();
+        state.groups = groups;
+        state.filteredGroups = groups;
+        renderGroups();
+      }
+    } catch (error) {
+      console.error('Erro ao buscar grupos:', error);
+    }
+  }
+
+  // --- Socket.IO Events ---
   socket.on('connect', () => {
-    console.log('✅ Socket conectado ao backend');
-    state.connectionAttempts = 0;
+    console.log('✅ Conectado ao servidor');
     showToast('Conectado ao servidor', 'success');
   });
-  
+
   socket.on('disconnect', () => {
-    console.log('❌ Socket desconectado');
-    setStatus('Desconectado do servidor', false);
+    console.log('❌ Desconectado do servidor');
+    setStatus('Desconectado', false);
   });
-  
-  socket.on('reconnecting', (attemptNumber) => {
-    state.connectionAttempts = attemptNumber;
-    console.log(`🔄 Tentando reconectar... (tentativa ${attemptNumber})`);
-    setStatus(`Reconectando... (tentativa ${attemptNumber})`, false);
-  });
-  
-  socket.on('reconnect_failed', () => {
-    console.log('❌ Falha ao reconectar');
-    setStatus('Falha na conexão. Recarregue a página.', false);
-    showToast('Conexão perdida. Recarregue a página.', 'error');
-  });
-  
+
   socket.on('qr', ({ dataUrl }) => {
     console.log('📱 QR Code recebido');
     setQR(dataUrl);
-    addResetButton();
-    if (el.qrCard?.classList.contains('hidden')) {
+    setStatus('Aguardando escaneamento', false);
+    if (el.qrCard.classList.contains('hidden')) {
       el.qrCard.classList.remove('hidden');
     }
   });
-  
-  socket.on('ready', () => { 
+
+  socket.on('ready', async () => {
     console.log('✅ WhatsApp conectado');
-    setStatus('WhatsApp conectado ✅', true); 
-    fetchGroups();
-    showToast('WhatsApp conectado com sucesso!', 'success');
-    if (el.qrCard && !el.qrCard.classList.contains('hidden')) {
-      el.qrCard.classList.add('hidden');
-    }
-  });
-  
-  socket.on('disconnected', () => {
-    setStatus('WhatsApp desconectado. Aguarde reconexão...', false);
-    if (el.qrCard?.classList.contains('hidden')) {
-      el.qrCard.classList.remove('hidden');
-      setQR(null);
-      addResetButton();
-    }
-  });
-  
-  socket.on('status', ({ ready }) => { 
-    if (ready) { 
-      setStatus('WhatsApp conectado ✅', true); 
-      fetchGroups();
-      if (el.qrCard && !el.qrCard.classList.contains('hidden')) {
-        el.qrCard.classList.add('hidden');
+    setStatus('Conectado', true);
+    el.qrCard.classList.add('hidden');
+    
+    // Busca grupos
+    try {
+      const response = await fetch(`${window.BACKEND_URL}/api/groups`);
+      if (response.ok) {
+        const groups = await response.json();
+        state.groups = groups;
+        state.filteredGroups = groups;
+        renderGroups();
+        showToast('WhatsApp conectado! Grupos carregados.', 'success');
       }
-    } else {
-      setStatus('Aguardando conexão...', false);
-      addResetButton();
+    } catch (error) {
+      console.error('Erro ao buscar grupos:', error);
     }
   });
-  
+
+  socket.on('disconnected', () => {
+    setStatus('Desconectado', false);
+    el.qrCard.classList.remove('hidden');
+    showToast('WhatsApp desconectado', 'warning');
+  });
+
   socket.on('message', ({ groupId, from, text, timestamp, messageId }) => {
-    pushChat(groupId, from, text, timestamp, messageId);
+    // Só adiciona se o grupo estiver selecionado
+    if (state.selected.has(groupId)) {
+      pushChat(groupId, from, text, timestamp, messageId);
+    }
   });
-  
+
   socket.on('message_sent', ({ groupId, text, timestamp, messageId, isReply }) => {
-    console.log('Confirmação de envio:', { groupId, messageId, isReply });
+    console.log('Mensagem enviada:', { groupId, isReply });
+    state.stats.delivered++;
+    updateUI();
   });
 
-  // Atalhos de teclado
-  document.addEventListener('keydown', (e) => {
-    if (e.ctrlKey && e.key === 'Enter' && document.activeElement === el.message) {
-      el.send.click();
-    }
-    if (e.key === 'Escape' && state.replyingTo) {
-      window.cancelReply();
-    }
-  });
+  // --- Funções Globais ---
+  window.cancelReplyFunction = () => {
+    state.replyingTo = null;
+    el.replyBox.classList.add('hidden');
+    document.querySelectorAll('.message-bubble .inline-block').forEach(el => {
+      el.classList.remove('ring-2', 'ring-purple-400');
+    });
+  };
 
-  // Solicita status inicial
-  setTimeout(() => {
-    socket.emit('request-status');
-  }, 1000);
+  window.refreshChatsFunction = () => {
+    renderChats();
+    showToast('Chats atualizados', 'success');
+  };
+
+  window.clearChatsFunction = () => {
+    state.chatByGroup.clear();
+    renderChats();
+    showToast('Chats limpos', 'success');
+  };
+
+  // --- Utilities ---
+  function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text || '';
+    return div.innerHTML;
+  }
+
+  function showToast(message, type = 'info') {
+    const toast = document.createElement('div');
+    toast.className = `
+      px-6 py-3 rounded-xl shadow-lg mb-3 animate-slideIn
+      ${type === 'success' ? 'bg-gradient-to-r from-green-500 to-emerald-600 text-white' :
+        type === 'error' ? 'bg-gradient-to-r from-red-500 to-pink-600 text-white' :
+        type === 'warning' ? 'bg-gradient-to-r from-amber-500 to-orange-600 text-white' :
+        'bg-gradient-to-r from-blue-500 to-indigo-600 text-white'}
+    `;
+    
+    toast.innerHTML = `
+      <div class="flex items-center gap-3">
+        ${type === 'success' ? '<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path></svg>' :
+          type === 'error' ? '<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"></path></svg>' :
+          type === 'warning' ? '<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path></svg>' :
+          '<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"></path></svg>'}
+        <span class="font-medium">${message}</span>
+      </div>
+    `;
+    
+    const container = document.getElementById('toast-container');
+    container.appendChild(toast);
+    
+    setTimeout(() => {
+      toast.style.opacity = '0';
+      toast.style.transform = 'translateX(100%)';
+      setTimeout(() => toast.remove(), 300);
+    }, 3000);
+  }
 });
