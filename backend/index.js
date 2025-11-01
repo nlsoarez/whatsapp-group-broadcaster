@@ -1,4 +1,4 @@
-// backend/index.js
+// backend/index.js - VERSÃO COM REPLY INTELIGENTE MULTI-GRUPO
 import express from 'express'
 import http from 'http'
 import { Server } from 'socket.io'
@@ -37,10 +37,11 @@ let ready = false
 let qrRetries = 0
 const MAX_QR_RETRIES = 5
 
-// Store para mensagens
+// Store expandido para melhor busca de mensagens
 const store = { 
-  messages: {},
-  sentMessages: {}
+  messages: {},        // mensagens por grupo
+  sentMessages: {},    // mensagens enviadas
+  messagePatterns: {}  // padrões de mensagem para matching
 }
 
 // Garante que o diretório auth existe
@@ -51,8 +52,67 @@ if (!fs.existsSync(AUTH_DIR)) {
 }
 
 // ---------------------------
-// Limpa sessão antiga se necessário
+// Funções auxiliares
 // ---------------------------
+
+// Normaliza texto para comparação
+function normalizeText(text) {
+  if (!text) return ''
+  return text.toLowerCase().trim().replace(/\s+/g, ' ')
+}
+
+// Calcula similaridade entre dois textos (0 a 1)
+function textSimilarity(text1, text2) {
+  const norm1 = normalizeText(text1)
+  const norm2 = normalizeText(text2)
+  
+  if (norm1 === norm2) return 1
+  
+  // Similaridade simples baseada em palavras comuns
+  const words1 = new Set(norm1.split(' '))
+  const words2 = new Set(norm2.split(' '))
+  
+  const intersection = new Set([...words1].filter(x => words2.has(x)))
+  const union = new Set([...words1, ...words2])
+  
+  return intersection.size / union.size
+}
+
+// Busca mensagem similar em um grupo
+function findSimilarMessage(groupId, targetText, senderName = null, threshold = 0.7) {
+  const groupMessages = store.messages[groupId] || []
+  
+  // Primeiro tenta busca exata
+  let bestMatch = groupMessages.find(m => {
+    const msgText = m.message?.conversation || m.message?.extendedTextMessage?.text
+    return msgText === targetText
+  })
+  
+  if (bestMatch) return bestMatch
+  
+  // Se não encontrar exata, busca por similaridade
+  let bestSimilarity = 0
+  
+  for (const msg of groupMessages) {
+    const msgText = msg.message?.conversation || m.message?.extendedTextMessage?.text
+    if (!msgText) continue
+    
+    const similarity = textSimilarity(msgText, targetText)
+    
+    // Se tiver nome do remetente, dá preferência a mensagens da mesma pessoa
+    const senderBonus = senderName && msg.pushName === senderName ? 0.1 : 0
+    const finalScore = similarity + senderBonus
+    
+    if (finalScore > bestSimilarity && finalScore >= threshold) {
+      bestSimilarity = finalScore
+      bestMatch = msg
+    }
+  }
+  
+  return bestMatch
+}
+
+// Limpa sessão
 function clearAuthState() {
   try {
     if (fs.existsSync(AUTH_DIR)) {
@@ -65,18 +125,12 @@ function clearAuthState() {
   }
 }
 
-// ---------------------------
-// Gera QR como base64
-// ---------------------------
+// Gera QR Code
 async function generateQRCode(qr) {
   try {
     const dataUrl = await qrcode.toDataURL(qr, {
       width: 300,
-      margin: 2,
-      color: {
-        dark: '#000000',
-        light: '#FFFFFF'
-      }
+      margin: 2
     })
     return dataUrl
   } catch (error) {
@@ -86,11 +140,10 @@ async function generateQRCode(qr) {
 }
 
 // ---------------------------
-// Inicialização do WhatsApp com melhorias
+// Inicialização do WhatsApp
 // ---------------------------
 async function startWA(forceNewSession = false) {
   try {
-    // Se forçar nova sessão ou muitas tentativas falhadas, limpa auth
     if (forceNewSession || qrRetries > MAX_QR_RETRIES) {
       clearAuthState()
       qrRetries = 0
@@ -98,13 +151,11 @@ async function startWA(forceNewSession = false) {
 
     console.log('📱 Iniciando conexão WhatsApp...')
     
-    // Obtém a versão mais recente do Baileys
     const { version, isLatest } = await fetchLatestBaileysVersion()
-    console.log(`📦 Usando Baileys versão: ${version.join('.')} ${isLatest ? '(última)' : '(atualização disponível)'}`)
+    console.log(`📦 Baileys v${version.join('.')} ${isLatest ? '(última)' : ''}`)
     
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR)
     
-    // Configurações melhoradas para evitar bloqueios
     sock = makeWASocket({
       version,
       printQRInTerminal: false,
@@ -113,40 +164,35 @@ async function startWA(forceNewSession = false) {
         keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' }))
       },
       logger: pino({ level: 'error' }),
-      browser: Browsers.ubuntu('Chrome'), // Simula Chrome no Ubuntu ao invés do padrão
+      browser: Browsers.ubuntu('Chrome'),
       connectTimeoutMs: 60000,
-      defaultQueryTimeoutMs: undefined,
       keepAliveIntervalMs: 10000,
       emitOwnEvents: true,
-      fireInitQueries: true,
       generateHighQualityLinkPreview: true,
       syncFullHistory: false,
       markOnlineOnConnect: true,
       getMessage: async (key) => {
-        // Retorna mensagem do cache se existir
         const jid = key.remoteJid
         const messageList = store.messages[jid] || []
         return messageList.find(m => m.key.id === key.id)?.message || undefined
       }
     })
 
-    // Connection update handler
+    // Connection handler
     sock.ev.on('connection.update', async (update) => {
       const { qr, connection, lastDisconnect } = update
       
       if (qr) {
         qrRetries++
-        console.log(`📱 QR Code recebido (tentativa ${qrRetries}/${MAX_QR_RETRIES})`)
+        console.log(`📱 QR Code (tentativa ${qrRetries}/${MAX_QR_RETRIES})`)
         
         const qrDataUrl = await generateQRCode(qr)
         if (qrDataUrl) {
           io.emit('qr', { dataUrl: qrDataUrl })
-          console.log('📤 QR Code enviado para o frontend')
         }
         
-        // Se exceder tentativas, reinicia com nova sessão
         if (qrRetries > MAX_QR_RETRIES) {
-          console.log('⚠️ Muitas tentativas de QR, reiniciando com nova sessão...')
+          console.log('⚠️ Muitas tentativas, reiniciando...')
           setTimeout(() => startWA(true), 3000)
         }
       }
@@ -155,83 +201,74 @@ async function startWA(forceNewSession = false) {
         ready = true
         qrRetries = 0
         io.emit('ready')
-        console.log('✅ WhatsApp conectado com sucesso!')
+        console.log('✅ WhatsApp conectado!')
       } else if (connection === 'close') {
         ready = false
         io.emit('disconnected')
         
-        // Análise detalhada do erro de desconexão
         const statusCode = lastDisconnect?.error?.output?.statusCode
         const shouldReconnect = statusCode !== DisconnectReason.loggedOut
         
-        console.log(`❌ Conexão fechada - Código: ${statusCode}`)
-        
-        if (statusCode === DisconnectReason.badSession) {
-          console.log('💔 Sessão corrompida, limpando...')
+        if (statusCode === 405 || statusCode === DisconnectReason.badSession) {
           clearAuthState()
-        }
-        
-        if (statusCode === 405 || statusCode === DisconnectReason.multideviceMismatch) {
-          console.log('⚠️ Erro 405 ou incompatibilidade multi-device detectada')
-          clearAuthState()
-          shouldReconnect = true
         }
         
         if (shouldReconnect) {
-          const delay = statusCode === DisconnectReason.timedOut ? 5000 : 10000
-          console.log(`🔄 Reconectando em ${delay/1000} segundos...`)
+          const delay = 10000
+          console.log(`🔄 Reconectando em ${delay/1000}s...`)
           setTimeout(() => startWA(statusCode === 405), delay)
-        } else {
-          console.log('🛑 Não reconectando - usuário fez logout')
-          clearAuthState()
         }
-      }
-      
-      if (connection === 'connecting') {
-        console.log('🔄 Conectando ao WhatsApp...')
       }
     })
 
-    // Salvar credenciais
     sock.ev.on('creds.update', saveCreds)
 
-    // Processar mensagens
+    // Processar mensagens com armazenamento inteligente
     sock.ev.on('messages.upsert', async (upsert) => {
       try {
-        const { messages, type } = upsert
+        const { messages } = upsert
         
         for (const msg of messages) {
           const from = msg.key.remoteJid
-          
-          // Ignora mensagens de status e broadcast
           if (!from || from === 'status@broadcast') continue
           
-          // Armazena no cache
+          // Armazena mensagem
           if (!store.messages[from]) store.messages[from] = []
           
-          store.messages[from].push({
+          const msgData = {
             key: msg.key,
             message: msg.message,
             messageTimestamp: msg.messageTimestamp,
-            pushName: msg.pushName
-          })
+            pushName: msg.pushName || msg.key.participant?.split('@')[0] || 'Usuário'
+          }
+          
+          store.messages[from].push(msgData)
+          
+          // Armazena padrão de mensagem para busca posterior
+          const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text
+          if (text) {
+            const normalizedText = normalizeText(text)
+            if (!store.messagePatterns[normalizedText]) {
+              store.messagePatterns[normalizedText] = []
+            }
+            store.messagePatterns[normalizedText].push({
+              groupId: from,
+              messageId: msg.key.id,
+              sender: msgData.pushName
+            })
+          }
           
           // Limita cache
-          if (store.messages[from].length > 100) {
-            store.messages[from] = store.messages[from].slice(-100)
+          if (store.messages[from].length > 150) {
+            store.messages[from] = store.messages[from].slice(-150)
           }
 
-          // Emite evento apenas para mensagens de grupo recebidas
+          // Emite para frontend
           if (!msg.key.fromMe && from.includes('@g.us')) {
-            const text =
-              msg.message?.conversation ||
-              msg.message?.extendedTextMessage?.text ||
-              '(mídia)'
-              
             io.emit('message', {
               groupId: from,
-              from: msg.pushName || msg.key.participant || 'Desconhecido',
-              text,
+              from: msgData.pushName,
+              text: text || '(mídia)',
               timestamp: msg.messageTimestamp * 1000,
               messageId: msg.key.id
             })
@@ -242,60 +279,186 @@ async function startWA(forceNewSession = false) {
       }
     })
     
-    // Monitora atualizações de mensagens
-    sock.ev.on('messages.update', (updates) => {
-      for (const update of updates) {
-        if (update.key && update.status === 2) {
-          console.log('✉️ Mensagem enviada confirmada')
-        }
-      }
-    })
-    
-    // Tratamento de erros do socket
-    sock.ev.on('error', (error) => {
-      console.error('Erro no socket:', error)
-    })
-    
   } catch (error) {
-    console.error('Erro fatal ao iniciar WhatsApp:', error)
-    
-    // Se erro crítico, limpa sessão e tenta novamente
-    if (error.message?.includes('405') || error.message?.includes('Connection Failure')) {
-      console.log('🧹 Limpando sessão devido a erro crítico...')
-      clearAuthState()
-      setTimeout(() => startWA(true), 5000)
-    } else {
-      setTimeout(() => startWA(), 10000)
-    }
+    console.error('Erro ao iniciar WhatsApp:', error)
+    setTimeout(() => startWA(), 10000)
   }
 }
 
 // ---------------------------
-// REST: força nova sessão
+// REST: Envio com Reply Inteligente
 // ---------------------------
-app.post('/api/reset-session', async (req, res) => {
+app.post('/api/send', async (req, res) => {
   try {
-    console.log('🔄 Resetando sessão...')
+    const { groupIds, message, replyTo } = req.body
     
-    if (sock) {
-      await sock.logout().catch(() => {})
-      sock.end()
+    if (!sock || !ready) {
+      return res.status(503).json({ error: 'WhatsApp não conectado' })
     }
     
-    clearAuthState()
-    ready = false
+    if (!groupIds?.length) {
+      return res.status(400).json({ error: 'Nenhum grupo selecionado' })
+    }
     
-    setTimeout(() => startWA(true), 1000)
+    if (!message?.trim()) {
+      return res.status(400).json({ error: 'Mensagem vazia' })
+    }
+
+    const results = []
+    console.log(`📤 Enviando para ${groupIds.length} grupos...`)
     
-    res.json({ success: true, message: 'Sessão resetada, aguarde novo QR' })
-  } catch (error) {
-    console.error('Erro ao resetar sessão:', error)
-    res.status(500).json({ error: 'Falha ao resetar sessão' })
+    // Se tem replyTo, prepara informações de busca
+    const replyInfo = replyTo ? {
+      text: replyTo.text,
+      from: replyTo.from,
+      messageId: replyTo.messageId,
+      originalGroupId: replyTo.groupId
+    } : null
+    
+    for (const gid of groupIds) {
+      try {
+        let sentMessage = null
+        let replyFound = false
+        
+        // Tenta fazer reply se foi solicitado
+        if (replyInfo) {
+          console.log(`🔍 Buscando mensagem similar em ${gid.split('@')[0]}...`)
+          
+          // Estratégia 1: Se é o grupo original, usa o messageId direto
+          if (gid === replyInfo.originalGroupId && replyInfo.messageId) {
+            const groupMessages = store.messages[gid] || []
+            const originalMsg = groupMessages.find(m => m.key.id === replyInfo.messageId)
+            
+            if (originalMsg) {
+              sentMessage = await sock.sendMessage(gid, 
+                { text: message },
+                { quoted: originalMsg }
+              )
+              replyFound = true
+              console.log(`✅ Reply direto em ${gid.split('@')[0]}`)
+            }
+          }
+          
+          // Estratégia 2: Busca mensagem similar no grupo atual
+          if (!replyFound && replyInfo.text) {
+            const similarMsg = findSimilarMessage(
+              gid, 
+              replyInfo.text, 
+              replyInfo.from,
+              0.6 // threshold de 60% de similaridade
+            )
+            
+            if (similarMsg) {
+              sentMessage = await sock.sendMessage(gid, 
+                { text: message },
+                { quoted: similarMsg }
+              )
+              replyFound = true
+              console.log(`✅ Reply por similaridade em ${gid.split('@')[0]}`)
+            }
+          }
+          
+          // Estratégia 3: Se não achou similar, tenta buscar última mensagem do mesmo remetente
+          if (!replyFound && replyInfo.from) {
+            const groupMessages = store.messages[gid] || []
+            const lastFromSender = [...groupMessages].reverse().find(m => 
+              m.pushName === replyInfo.from && 
+              (m.message?.conversation || m.message?.extendedTextMessage?.text)
+            )
+            
+            if (lastFromSender) {
+              sentMessage = await sock.sendMessage(gid, 
+                { text: message },
+                { quoted: lastFromSender }
+              )
+              replyFound = true
+              console.log(`✅ Reply para última msg de ${replyInfo.from} em ${gid.split('@')[0]}`)
+            }
+          }
+        }
+        
+        // Se não conseguiu fazer reply ou não era pra fazer, envia normal
+        if (!sentMessage) {
+          // Se era pra ser reply mas não achou, adiciona contexto
+          const finalMessage = replyInfo && !replyFound
+            ? `↩️ @${replyInfo.from || 'usuário'}: "${replyInfo.text?.substring(0, 50)}..."\n\n${message}`
+            : message
+            
+          sentMessage = await sock.sendMessage(gid, { text: finalMessage })
+          console.log(`📨 Mensagem ${replyInfo && !replyFound ? 'com contexto' : 'normal'} em ${gid.split('@')[0]}`)
+        }
+        
+        // Armazena mensagem enviada
+        if (sentMessage) {
+          const msgData = {
+            key: sentMessage.key,
+            message: { conversation: message },
+            messageTimestamp: Date.now() / 1000,
+            pushName: 'Você'
+          }
+          
+          if (!store.messages[gid]) store.messages[gid] = []
+          store.messages[gid].push(msgData)
+        }
+        
+        // Emite confirmação
+        io.emit('message_sent', { 
+          groupId: gid, 
+          text: message, 
+          timestamp: Date.now(),
+          messageId: sentMessage?.key?.id,
+          isReply: replyFound
+        })
+        
+        results.push({ 
+          groupId: gid, 
+          success: true, 
+          messageId: sentMessage?.key?.id,
+          replyFound: replyFound
+        })
+        
+      } catch (error) {
+        console.error(`❌ Erro em ${gid}:`, error.message)
+        results.push({ 
+          groupId: gid, 
+          success: false, 
+          error: error.message 
+        })
+      }
+      
+      // Pequeno delay entre envios para evitar rate limit
+      if (groupIds.length > 1) {
+        await new Promise(resolve => setTimeout(resolve, 500))
+      }
+    }
+    
+    // Resumo do envio
+    const successCount = results.filter(r => r.success).length
+    const replyCount = results.filter(r => r.replyFound).length
+    
+    console.log(`📊 Resultado: ${successCount}/${groupIds.length} enviados, ${replyCount} como reply`)
+    
+    res.json({ 
+      ok: true, 
+      results,
+      summary: {
+        total: groupIds.length,
+        success: successCount,
+        replies: replyCount
+      }
+    })
+    
+  } catch (e) {
+    console.error('Erro geral:', e)
+    res.status(500).json({ 
+      error: 'Falha ao enviar', 
+      details: e.message 
+    })
   }
 })
 
 // ---------------------------
-// REST: lista grupos
+// REST: Listar grupos
 // ---------------------------
 app.get('/api/groups', async (req, res) => {
   try {
@@ -318,12 +481,12 @@ app.get('/api/groups', async (req, res) => {
 })
 
 // ---------------------------
-// REST: foto do grupo
+// REST: Foto do grupo
 // ---------------------------
 app.get('/api/group-picture/:jid', async (req, res) => {
   try {
     if (!sock || !ready) {
-      return res.status(503).json({ error: 'WhatsApp não conectado' })
+      return res.status(503).end()
     }
     
     const url = await sock.profilePictureUrl(req.params.jid, 'image').catch(() => null)
@@ -339,128 +502,44 @@ app.get('/api/group-picture/:jid', async (req, res) => {
 })
 
 // ---------------------------
-// REST: envio de mensagens
+// REST: Reset sessão
 // ---------------------------
-app.post('/api/send', async (req, res) => {
+app.post('/api/reset-session', async (req, res) => {
   try {
-    const { groupIds, message, replyTo } = req.body
+    console.log('🔄 Resetando sessão...')
     
-    if (!sock || !ready) {
-      return res.status(503).json({ error: 'WhatsApp não conectado' })
+    if (sock) {
+      await sock.logout().catch(() => {})
+      sock.end()
     }
     
-    if (!groupIds?.length) {
-      return res.status(400).json({ error: 'Nenhum grupo selecionado' })
-    }
+    clearAuthState()
+    ready = false
     
-    if (!message?.trim()) {
-      return res.status(400).json({ error: 'Mensagem vazia' })
-    }
-
-    const results = []
+    setTimeout(() => startWA(true), 1000)
     
-    for (const gid of groupIds) {
-      let sentMessage = null
-      
-      try {
-        // Verifica se é uma resposta
-        if (replyTo?.groupId === gid && (replyTo?.messageId || replyTo?.text)) {
-          const groupMessages = store.messages[gid] || []
-          let originalMsg = null
-          
-          // Busca por messageId primeiro
-          if (replyTo.messageId) {
-            originalMsg = groupMessages.find(m => m.key.id === replyTo.messageId)
-          }
-          
-          // Se não encontrou por ID, busca por texto
-          if (!originalMsg && replyTo.text) {
-            originalMsg = groupMessages.find(m => {
-              const msgText = m.message?.conversation || 
-                            m.message?.extendedTextMessage?.text
-              return msgText === replyTo.text
-            })
-          }
-          
-          if (originalMsg) {
-            sentMessage = await sock.sendMessage(gid, 
-              { text: message },
-              { quoted: originalMsg }
-            )
-            console.log(`✅ Resposta enviada para grupo`)
-          } else {
-            // Fallback
-            const fallbackText = `↩️ ${replyTo.text ? `Em resposta a: "${replyTo.text.substring(0, 100)}..."\n\n` : ''}${message}`
-            sentMessage = await sock.sendMessage(gid, { text: fallbackText })
-          }
-        } else {
-          // Mensagem normal
-          sentMessage = await sock.sendMessage(gid, { text: message })
-        }
-        
-        // Armazena no cache
-        if (sentMessage) {
-          const msgData = {
-            key: sentMessage.key,
-            message: { conversation: message },
-            messageTimestamp: Date.now() / 1000
-          }
-          
-          if (!store.messages[gid]) store.messages[gid] = []
-          store.messages[gid].push(msgData)
-        }
-        
-        // Emite evento
-        io.emit('message_sent', { 
-          groupId: gid, 
-          text: message, 
-          timestamp: Date.now(),
-          messageId: sentMessage?.key?.id,
-          isReply: !!replyTo
-        })
-        
-        results.push({ 
-          groupId: gid, 
-          success: true, 
-          messageId: sentMessage?.key?.id 
-        })
-        
-      } catch (error) {
-        console.error(`Erro ao enviar para grupo:`, error.message)
-        results.push({ 
-          groupId: gid, 
-          success: false, 
-          error: error.message 
-        })
-      }
-    }
-
-    res.json({ ok: true, results })
-    
-  } catch (e) {
-    console.error('Erro geral no envio:', e)
-    res.status(500).json({ 
-      error: 'Falha ao enviar mensagem', 
-      details: e.message 
-    })
+    res.json({ success: true, message: 'Sessão resetada' })
+  } catch (error) {
+    console.error('Erro ao resetar:', error)
+    res.status(500).json({ error: 'Falha ao resetar' })
   }
 })
 
 // ---------------------------
-// REST: health check
+// REST: Health & Debug
 // ---------------------------
 app.get('/api/health', (req, res) => {
   res.json({
     status: ready ? 'connected' : 'disconnected',
     uptime: process.uptime(),
     timestamp: Date.now(),
-    qrRetries: qrRetries
+    cacheSize: {
+      groups: Object.keys(store.messages).length,
+      patterns: Object.keys(store.messagePatterns).length
+    }
   })
 })
 
-// ---------------------------
-// REST: debug cache
-// ---------------------------
 app.get('/api/debug/cache/:groupId', async (req, res) => {
   const { groupId } = req.params
   const messages = store.messages[groupId] || []
@@ -468,11 +547,12 @@ app.get('/api/debug/cache/:groupId', async (req, res) => {
   res.json({
     groupId,
     totalMessages: messages.length,
-    messages: messages.slice(-10).map(m => ({
+    lastMessages: messages.slice(-10).map(m => ({
       id: m.key?.id,
       text: m.message?.conversation || m.message?.extendedTextMessage?.text,
+      from: m.pushName,
       fromMe: m.key?.fromMe,
-      timestamp: m.messageTimestamp
+      timestamp: new Date(m.messageTimestamp * 1000).toLocaleString('pt-BR')
     }))
   })
 })
@@ -481,9 +561,8 @@ app.get('/api/debug/cache/:groupId', async (req, res) => {
 // Socket.IO
 // ---------------------------
 io.on('connection', (socket) => {
-  console.log('🔌 Cliente conectado via Socket.IO')
+  console.log('🔌 Cliente conectado')
   
-  // Envia status atual
   socket.emit('status', { ready })
   
   if (ready) {
@@ -497,13 +576,6 @@ io.on('connection', (socket) => {
   socket.on('request-status', () => {
     socket.emit('status', { ready })
   })
-  
-  socket.on('request-qr', () => {
-    if (!ready && !sock) {
-      console.log('📱 QR solicitado, reiniciando conexão...')
-      startWA(true)
-    }
-  })
 })
 
 // ---------------------------
@@ -511,16 +583,14 @@ io.on('connection', (socket) => {
 // ---------------------------
 process.on('uncaughtException', (err) => {
   console.error('❌ Erro não capturado:', err)
-  // Não fecha o processo, tenta recuperar
 })
 
 process.on('unhandledRejection', (err) => {
   console.error('❌ Promise rejeitada:', err)
 })
 
-// Graceful shutdown
 process.on('SIGINT', async () => {
-  console.log('🛑 Encerrando servidor...')
+  console.log('🛑 Encerrando...')
   
   if (sock) {
     await sock.end()
@@ -538,12 +608,10 @@ process.on('SIGINT', async () => {
 const PORT = process.env.PORT || 3000
 
 server.listen(PORT, async () => {
-  console.log(`🚀 Servidor iniciado na porta ${PORT}`)
+  console.log(`🚀 Servidor na porta ${PORT}`)
   console.log(`📊 Health: http://localhost:${PORT}/api/health`)
-  console.log(`🔄 Reset: POST http://localhost:${PORT}/api/reset-session`)
   console.log('⏳ Iniciando WhatsApp...')
   
-  // Aguarda um pouco antes de iniciar para garantir que tudo está pronto
   setTimeout(() => {
     startWA()
   }, 2000)
