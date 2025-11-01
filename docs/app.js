@@ -1,746 +1,371 @@
-// app.js - Versão Otimizada e Corrigida
+// docs/app.js
 document.addEventListener('DOMContentLoaded', () => {
   const socket = io(window.BACKEND_URL, {
-    transports: ['websocket', 'polling'],
     reconnection: true,
-    reconnectionAttempts: 5,
-    reconnectionDelay: 1000
+    reconnectionDelay: 1000,
+    reconnectionAttempts: Infinity
   });
 
   const el = {
     qr: document.getElementById('qr'),
-    status: document.getElementById('status-text'),
-    statusDot: document.getElementById('status-dot'),
+    qrCard: document.getElementById('qr-card'),
+    status: document.getElementById('wa-status'),
     groups: document.getElementById('groups'),
-    groupsCount: document.getElementById('groups-count'),
-    selectedCount: document.getElementById('selected-count'),
-    chats: document.getElementById('chats'),
+    chatsPreview: document.getElementById('chats-preview'),
+    chatsFull: document.getElementById('chats-full'),
     message: document.getElementById('message'),
     send: document.getElementById('send'),
-    qrCard: document.getElementById('qr-card'),
-    charCount: document.getElementById('char-count'),
-    sentCount: document.getElementById('sent-count'),
-    deliveredCount: document.getElementById('delivered-count'),
-    readCount: document.getElementById('read-count'),
-    groupSearch: document.getElementById('group-search'),
-    replyBox: document.getElementById('reply-indicator-box'),
-    replyPreview: document.getElementById('reply-preview'),
-    resetBtn: document.getElementById('reset-session-btn')
+    logoutBtn: document.getElementById('logout-btn'),
+    expandMonitor: document.getElementById('expand-monitor'),
+    modal: document.getElementById('monitor-modal'),
+    closeModal: document.getElementById('close-modal')
   };
 
   const state = {
     groups: [],
-    filteredGroups: [],
     selected: new Set(),
     chatByGroup: new Map(),
-    messageIdMap: new Map(),
     replyingTo: null,
-    stats: {
-      sent: 0,
-      delivered: 0,
-      read: 0
-    },
-    isLoadingHistory: new Set() // Track loading state per group
+    isModalOpen: false
   };
-
-  // --- Inicialização ---
-  initializeEventListeners();
-  requestInitialData();
 
   // --- Funções de UI ---
   function setQR(url) {
-    if (url) {
-      el.qr.innerHTML = `
-        <img src="${url}" alt="QR Code" class="w-full h-full object-contain rounded-lg" />
-      `;
-    } else {
-      el.qr.innerHTML = '<div class="loading-skeleton w-full h-full rounded-lg"></div>';
-    }
+    el.qr.innerHTML = `<img src="${url}" alt="QR Code" class="w-full h-full object-contain rounded-lg" />`;
   }
 
-  function setStatus(text, connected) {
-    el.status.textContent = text;
-    el.statusDot.className = connected 
-      ? 'w-2 h-2 rounded-full bg-green-500 pulse-dot' 
-      : 'w-2 h-2 rounded-full bg-red-500 pulse-dot';
-    
-    const badge = document.getElementById('connection-status');
-    if (connected) {
-      badge.classList.remove('glass-dark');
-      badge.classList.add('bg-green-50', 'border-green-200');
-    } else {
-      badge.classList.remove('bg-green-50', 'border-green-200');
-      badge.classList.add('glass-dark');
-    }
+  function setStatus(text, ok) {
+    el.status.innerHTML = `<span class="${ok ? 'text-emerald-600' : 'text-red-600'}">${text}</span>`;
+  }
+
+  function showLogoutButton(show) {
+    el.logoutBtn.classList.toggle('hidden', !show);
   }
 
   function renderGroups() {
     el.groups.innerHTML = '';
-    
-    if (state.filteredGroups.length === 0) {
-      el.groups.innerHTML = `
-        <div class="text-center py-8 text-gray-500">
-          ${state.groups.length === 0 ? 'Nenhum grupo disponível' : 'Nenhum grupo encontrado'}
-        </div>
-      `;
-      return;
-    }
-    
-    state.filteredGroups.forEach(g => {
+    for (const g of state.groups) {
       const div = document.createElement('div');
-      const isSelected = state.selected.has(g.id);
-      const messageCount = state.chatByGroup.get(g.id)?.length || 0;
-      
-      div.className = 'group-item flex items-center gap-3 p-3 bg-white/50 hover:bg-white/70 rounded-xl cursor-pointer transition-all';
-      div.dataset.groupId = g.id;
-      
-      div.innerHTML = `
-        <input type="checkbox" 
-          class="group-checkbox w-5 h-5 rounded border-2 accent-purple-600"
-          data-group-id="${g.id}"
-          ${isSelected ? 'checked' : ''}
-        >
-        
-        <img 
-          src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23999'%3E%3Cpath d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z'/%3E%3C/svg%3E"
-          class="w-10 h-10 rounded-full object-cover bg-gray-100 group-picture"
-          data-group-id="${g.id}"
-        >
-        
-        <div class="flex-1 min-w-0">
-          <p class="font-medium text-gray-800 truncate">${escapeHtml(g.subject)}</p>
-          <p class="text-xs text-gray-500">${g.participants || 0} participantes</p>
-        </div>
-        
-        ${messageCount > 0 ? `
-          <div class="px-2 py-1 bg-purple-100 text-purple-700 rounded-full text-xs font-medium">
-            ${messageCount}
-          </div>
-        ` : ''}
-        
-        ${state.isLoadingHistory.has(g.id) ? `
-          <div class="animate-spin h-4 w-4 border-2 border-purple-500 border-t-transparent rounded-full"></div>
-        ` : ''}
-      `;
-      
-      // Checkbox handler - OTIMIZADO
-      const checkbox = div.querySelector('.group-checkbox');
-      checkbox.addEventListener('click', (e) => {
-        e.stopPropagation(); // Previne duplo trigger
-        handleGroupSelection(g.id, checkbox.checked);
-      });
-      
-      // Div click handler
-      div.addEventListener('click', (e) => {
-        if (e.target === checkbox) return; // Ignora se clicou no checkbox
-        checkbox.checked = !checkbox.checked;
-        handleGroupSelection(g.id, checkbox.checked);
-      });
-      
-      el.groups.appendChild(div);
-      
-      // Carrega foto do grupo de forma assíncrona
-      loadGroupPicture(g.id);
-    });
-    
-    updateUI();
-  }
+      div.className = 'flex items-center space-x-2 border rounded-lg p-2 hover:bg-slate-50 cursor-pointer transition-all';
 
-  function handleGroupSelection(groupId, isSelected) {
-    if (isSelected) {
-      state.selected.add(groupId);
-      loadGroupHistory(groupId); // Carrega histórico
-    } else {
-      state.selected.delete(groupId);
-      // Remove mensagens do grupo desmarcado
-      if (state.chatByGroup.has(groupId)) {
-        renderChats(); // Re-renderiza sem esse grupo
-      }
-    }
-    updateUI();
-  }
-
-  async function loadGroupPicture(groupId) {
-    try {
-      const response = await fetch(`${window.BACKEND_URL}/api/group-picture/${groupId}`);
-      if (response.ok) {
-        const data = await response.json();
-        if (data.url) {
-          const img = document.querySelector(`.group-picture[data-group-id="${groupId}"]`);
-          if (img) img.src = data.url;
-        }
-      }
-    } catch (error) {
-      // Silently fail for group pictures
-    }
-  }
-
-  async function loadGroupHistory(groupId) {
-    if (state.isLoadingHistory.has(groupId)) return; // Evita duplicatas
-    
-    state.isLoadingHistory.add(groupId);
-    
-    // Atualiza UI para mostrar loading
-    const groupEl = document.querySelector(`.group-item[data-group-id="${groupId}"]`);
-    if (groupEl && !groupEl.querySelector('.animate-spin')) {
-      const loader = document.createElement('div');
-      loader.className = 'animate-spin h-4 w-4 border-2 border-purple-500 border-t-transparent rounded-full';
-      groupEl.appendChild(loader);
-    }
-    
-    try {
-      // Tenta buscar do cache/debug endpoint primeiro
-      const response = await fetch(`${window.BACKEND_URL}/api/debug/cache/${groupId}`);
-      
-      if (response.ok) {
-        const data = await response.json();
-        
-        if (data.messages && data.messages.length > 0) {
-          // Limpa mensagens antigas deste grupo
-          if (!state.chatByGroup.has(groupId)) {
-            state.chatByGroup.set(groupId, []);
-          }
-          
-          // Adiciona mensagens do histórico
-          data.messages.forEach(msg => {
-            if (msg.text) {
-              // Converte timestamp string para número se necessário
-              const timestamp = msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now();
-              
-              pushChat(
-                groupId, 
-                msg.fromMe ? 'Você' : msg.from || 'Desconhecido',
-                msg.text,
-                timestamp,
-                msg.id || null,
-                null,
-                true // isHistory flag
-              );
-            }
-          });
-          
-          console.log(`📜 Histórico carregado para ${groupId}: ${data.messages.length} mensagens`);
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.className = 'w-4 h-4 cursor-pointer';
+      checkbox.onchange = () => {
+        if (checkbox.checked) {
+          state.selected.add(g.id);
+          // Requisita histórico ao selecionar
+          socket.emit('request_history', { groupId: g.id });
         } else {
-          console.log(`📭 Sem histórico para ${groupId}`);
+          state.selected.delete(g.id);
         }
+      };
+
+      const img = document.createElement('img');
+      img.className = 'w-8 h-8 rounded-full object-cover bg-gray-200';
+      img.alt = g.subject;
+      fetch(`${window.BACKEND_URL}/api/group-picture/${g.id}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d?.url) img.src = d.url; })
+        .catch(() => {});
+
+      const span = document.createElement('span');
+      span.textContent = g.subject;
+      span.className = 'text-sm font-medium truncate flex-1';
+
+      div.appendChild(checkbox);
+      div.appendChild(img);
+      div.appendChild(span);
+      el.groups.appendChild(div);
+    }
+  }
+
+  async function fetchGroups() {
+    try {
+      const r = await fetch(`${window.BACKEND_URL}/api/groups`);
+      const data = await r.json();
+      if (r.ok) {
+        state.groups = data;
+        renderGroups();
       }
-    } catch (error) {
-      console.error(`Erro ao carregar histórico de ${groupId}:`, error);
-    } finally {
-      state.isLoadingHistory.delete(groupId);
-      
-      // Remove loader
-      const loader = document.querySelector(`.group-item[data-group-id="${groupId}"] .animate-spin`);
-      if (loader) loader.remove();
-      
-      renderChats();
+    } catch (e) {
+      console.error('Erro ao buscar grupos:', e);
     }
   }
 
-  function updateUI() {
-    el.groupsCount.textContent = `${state.groups.length} grupos disponíveis`;
-    el.selectedCount.textContent = state.selected.size;
+  // --- Chat visual ---
+  function pushChat(groupId, who, text, ts, replyText) {
+    if (!state.chatByGroup.has(groupId)) state.chatByGroup.set(groupId, []);
     
-    const count = state.selected.size;
-    if (count > 0) {
-      el.send.innerHTML = `
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
-        </svg>
-        <span>Enviar para ${count} grupo${count > 1 ? 's' : ''}</span>
-      `;
-      el.send.classList.remove('opacity-50', 'cursor-not-allowed');
-      el.send.disabled = false;
-    } else {
-      el.send.innerHTML = `
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
-        </svg>
-        <span>Selecione grupos primeiro</span>
-      `;
-      el.send.classList.add('opacity-50', 'cursor-not-allowed');
-      el.send.disabled = true;
+    const messages = state.chatByGroup.get(groupId);
+    
+    // Evita duplicatas
+    const exists = messages.find(m => m.who === who && m.text === text && Math.abs(m.ts - ts) < 1000);
+    if (!exists) {
+      messages.push({ who, text, ts, replyText });
     }
     
-    el.sentCount.textContent = state.stats.sent;
-    el.deliveredCount.textContent = state.stats.delivered;
-    el.readCount.textContent = state.stats.read;
+    renderChats();
   }
 
-  // --- Sistema de Chat ---
-  function pushChat(groupId, who, text, ts, messageId, replyText, isHistory = false) {
-    if (!state.chatByGroup.has(groupId)) {
-      state.chatByGroup.set(groupId, []);
+  function pushHistory(groupId, messages) {
+    if (!state.chatByGroup.has(groupId)) state.chatByGroup.set(groupId, []);
+    
+    const existingMessages = state.chatByGroup.get(groupId);
+    
+    // Adiciona mensagens antigas sem duplicar
+    for (const msg of messages) {
+      const exists = existingMessages.find(m => 
+        m.who === msg.from && 
+        m.text === msg.text && 
+        Math.abs(m.ts - msg.timestamp) < 1000
+      );
+      
+      if (!exists) {
+        existingMessages.unshift({ 
+          who: msg.from, 
+          text: msg.text, 
+          ts: msg.timestamp 
+        });
+      }
     }
-    
-    const chat = state.chatByGroup.get(groupId);
-    
-    // Evita duplicatas por messageId
-    if (messageId) {
-      const exists = chat.some(m => m.messageId === messageId);
-      if (exists) return;
-    }
-    
-    chat.push({ 
-      who, 
-      text, 
-      ts: ts || Date.now(), 
-      messageId: messageId || `${Date.now()}-${Math.random()}`,
-      replyText 
-    });
     
     // Ordena por timestamp
-    chat.sort((a, b) => a.ts - b.ts);
+    existingMessages.sort((a, b) => a.ts - b.ts);
     
-    // Limita a 100 mensagens
-    if (chat.length > 100) {
-      state.chatByGroup.set(groupId, chat.slice(-100));
-    }
-    
-    if (messageId && groupId) {
-      state.messageIdMap.set(`${groupId}:${text}`, messageId);
-    }
-    
-    if (!isHistory) {
-      renderChats();
-    }
+    renderChats();
   }
 
   function renderChats() {
-    el.chats.innerHTML = '';
+    renderChatContainer(el.chatsPreview, false);
+    if (state.isModalOpen) {
+      renderChatContainer(el.chatsFull, true);
+    }
+  }
+
+  function renderChatContainer(container, isFull) {
+    container.innerHTML = '';
     
-    const selectedGroups = Array.from(state.selected);
-    
-    if (selectedGroups.length === 0) {
-      el.chats.innerHTML = `
-        <div class="glass-dark rounded-xl p-6 flex flex-col items-center justify-center min-h-[300px]">
-          <svg class="w-16 h-16 text-gray-400 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
-          </svg>
-          <p class="text-gray-500 text-center">
-            Selecione grupos para monitorar<br>
-            <span class="text-xs">As mensagens aparecerão aqui</span>
-          </p>
-        </div>
-      `;
+    if (state.chatByGroup.size === 0) {
+      container.innerHTML = '<p class="text-gray-500 text-sm text-center py-4">Nenhuma mensagem ainda. Selecione grupos para monitorar.</p>';
       return;
     }
     
-    selectedGroups.forEach(groupId => {
-      const messages = state.chatByGroup.get(groupId) || [];
-      const group = state.groups.find(g => g.id === groupId);
+    for (const [gid, msgs] of state.chatByGroup.entries()) {
+      const group = state.groups.find(g => g.id === gid);
+      const card = document.createElement('div');
+      card.className = 'border rounded-lg p-4 bg-white';
       
-      if (!group) return;
+      const header = document.createElement('div');
+      header.className = 'flex items-center gap-2 mb-3 pb-2 border-b';
       
-      const chatCard = document.createElement('div');
-      chatCard.className = 'glass-dark rounded-xl p-4';
+      const avatar = document.createElement('div');
+      avatar.className = 'w-10 h-10 rounded-full bg-[#E60000] flex items-center justify-center text-white font-bold';
+      avatar.textContent = (group?.subject || 'Grupo')[0].toUpperCase();
       
-      const header = `
-        <div class="flex items-center justify-between mb-3 pb-2 border-b border-gray-200">
-          <div class="flex items-center gap-2">
-            <div class="w-2 h-2 bg-green-500 rounded-full"></div>
-            <h3 class="font-semibold text-gray-800">${escapeHtml(group.subject)}</h3>
-          </div>
-          <span class="text-xs text-gray-500">${messages.length} mensagens</span>
-        </div>
-      `;
+      const title = document.createElement('div');
+      title.className = 'font-semibold text-gray-800';
+      title.textContent = group ? group.subject : gid;
       
-      let messagesHtml = '';
+      const badge = document.createElement('span');
+      badge.className = 'ml-auto text-xs bg-[#E60000] text-white px-2 py-1 rounded-full';
+      badge.textContent = `${msgs.length} msgs`;
       
-      if (messages.length === 0) {
-        messagesHtml = `
-          <div class="text-center py-4 text-gray-400 text-sm">
-            Sem mensagens recentes
-          </div>
-        `;
-      } else {
-        messagesHtml = messages.slice(-20).map(m => {
-          const isMe = m.who === 'Você';
-          const time = new Date(m.ts).toLocaleTimeString('pt-BR', { 
-            hour: '2-digit', 
-            minute: '2-digit' 
-          });
-          
-          return `
-            <div class="message-bubble mb-2 ${isMe ? 'text-right' : ''}" 
-                 data-message-id="${m.messageId}"
-                 data-message-text="${escapeHtml(m.text)}"
-                 data-message-from="${escapeHtml(m.who)}"
-                 data-group-id="${groupId}">
-              <div class="inline-block max-w-[80%] ${
-                isMe 
-                  ? 'bg-gradient-to-r from-purple-500 to-indigo-500 text-white' 
-                  : 'bg-white text-gray-800'
-              } rounded-2xl px-4 py-2 shadow-md cursor-pointer hover:shadow-lg transition-all">
-                ${m.replyText ? `
-                  <div class="text-xs ${isMe ? 'text-purple-100' : 'text-gray-500'} mb-1 italic border-l-2 ${isMe ? 'border-purple-300' : 'border-gray-300'} pl-2">
-                    ↩️ ${escapeHtml(m.replyText.substring(0, 50))}${m.replyText.length > 50 ? '...' : ''}
-                  </div>
-                ` : ''}
-                ${!isMe ? `<p class="text-xs font-semibold text-purple-600 mb-1">${escapeHtml(m.who)}</p>` : ''}
-                <p class="text-sm break-words">${escapeHtml(m.text)}</p>
-                <p class="text-xs ${isMe ? 'text-purple-100' : 'text-gray-400'} mt-1">${time}</p>
-              </div>
+      header.appendChild(avatar);
+      header.appendChild(title);
+      header.appendChild(badge);
+      card.appendChild(header);
+
+      const messagesDiv = document.createElement('div');
+      messagesDiv.className = 'space-y-2';
+      
+      const displayMessages = isFull ? msgs.slice(-100) : msgs.slice(-10);
+      
+      for (const m of displayMessages) {
+        const line = document.createElement('div');
+        line.className = 'text-sm p-2 hover:bg-slate-50 rounded-md cursor-pointer transition-all border-l-2 border-transparent hover:border-[#E60000]';
+        const time = new Date(m.ts).toLocaleTimeString('pt-BR');
+
+        if (m.replyText) {
+          line.innerHTML = `
+            <div class="text-xs text-slate-500 border-l-4 border-emerald-500 pl-2 italic mb-1 bg-emerald-50 rounded p-1">
+              ${escapeHtml(m.replyText)}
             </div>
+            <div class="font-semibold text-gray-700">${escapeHtml(m.who)}:</div>
+            <div class="text-gray-600">${escapeHtml(m.text)}</div>
+            <div class="text-[10px] text-slate-400 mt-1">${time}</div>
           `;
-        }).join('');
-      }
-      
-      chatCard.innerHTML = header + `
-        <div class="max-h-[400px] overflow-y-auto scrollbar-thin pr-2">
-          ${messagesHtml}
-        </div>
-      `;
-      
-      // Event listeners para reply
-      chatCard.querySelectorAll('.message-bubble').forEach(bubble => {
-        bubble.addEventListener('click', function() {
-          const messageText = this.dataset.messageText;
-          const sender = this.dataset.messageFrom;
-          const messageId = this.dataset.messageId;
-          const groupId = this.dataset.groupId;
+        } else {
+          line.innerHTML = `
+            <div class="font-semibold text-gray-700">${escapeHtml(m.who)}:</div>
+            <div class="text-gray-600">${escapeHtml(m.text)}</div>
+            <div class="text-[10px] text-slate-400 mt-1">${time}</div>
+          `;
+        }
+
+        // Clique para responder
+        line.onclick = () => {
+          state.replyingTo = { groupId: gid, text: m.text, from: m.who };
+          el.message.value = `↩️ Respondendo: ${m.text}\n\n`;
+          el.message.focus();
           
-          setReply({
-            groupId: groupId,
-            text: messageText,
-            from: sender,
-            messageId: messageId
-          });
-          
-          // Visual feedback
-          document.querySelectorAll('.message-bubble > div').forEach(el => {
-            el.classList.remove('ring-2', 'ring-purple-400');
-          });
-          this.querySelector('div').classList.add('ring-2', 'ring-purple-400');
-        });
-      });
-      
-      el.chats.appendChild(chatCard);
-      
-      // Auto scroll
-      const scrollContainer = chatCard.querySelector('.overflow-y-auto');
-      if (scrollContainer) {
-        scrollContainer.scrollTop = scrollContainer.scrollHeight;
-      }
-    });
-  }
+          // Fecha modal se aberto
+          if (state.isModalOpen) {
+            closeMonitorModal();
+          }
+        };
 
-  function setReply(replyInfo) {
-    state.replyingTo = replyInfo;
-    
-    el.replyBox.classList.remove('hidden');
-    el.replyPreview.innerHTML = `
-      <span class="font-medium">${escapeHtml(replyInfo.from)}</span>: 
-      "${escapeHtml(replyInfo.text.substring(0, 100))}${replyInfo.text.length > 100 ? '...' : ''}"
-    `;
-    
-    el.message.focus();
-  }
-
-  // --- Event Listeners ---
-  function initializeEventListeners() {
-    // Pesquisa de grupos - com debounce
-    let searchTimeout;
-    el.groupSearch.addEventListener('input', (e) => {
-      clearTimeout(searchTimeout);
-      searchTimeout = setTimeout(() => {
-        const search = e.target.value.toLowerCase();
-        state.filteredGroups = state.groups.filter(g => 
-          g.subject.toLowerCase().includes(search)
-        );
-        renderGroups();
-      }, 300); // Debounce de 300ms
-    });
-
-    // Contador de caracteres
-    el.message.addEventListener('input', () => {
-      el.charCount.textContent = el.message.value.length;
-    });
-
-    // Enviar mensagem
-    el.send.addEventListener('click', sendMessage);
-
-    // Atalhos de teclado
-    document.addEventListener('keydown', (e) => {
-      if (e.ctrlKey && e.key === 'Enter' && !el.send.disabled) {
-        sendMessage();
-      }
-      if (e.key === 'Escape') {
-        window.cancelReplyFunction();
-      }
-    });
-
-    // Reset session
-    el.resetBtn.addEventListener('click', resetSession);
-  }
-
-  async function sendMessage() {
-    if (el.send.disabled) return;
-    
-    const text = el.message.value.trim();
-    
-    if (!text) {
-      showToast('Digite uma mensagem', 'error');
-      return;
-    }
-    
-    const ids = Array.from(state.selected);
-    if (!ids.length) {
-      showToast('Selecione pelo menos um grupo', 'warning');
-      return;
-    }
-
-    const payload = { 
-      groupIds: ids, 
-      message: text 
-    };
-    
-    if (state.replyingTo) {
-      payload.replyTo = state.replyingTo;
-    }
-
-    el.send.disabled = true;
-    el.send.innerHTML = '<span class="animate-pulse">Enviando...</span>';
-    
-    try {
-      const response = await fetch(`${window.BACKEND_URL}/api/send`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      
-      const data = await response.json();
-      
-      if (!response.ok || !data.ok) {
-        throw new Error(data.error || 'Falha no envio');
-      }
-
-      state.stats.sent += ids.length;
-      
-      const now = Date.now();
-      ids.forEach(groupId => {
-        pushChat(groupId, 'Você', text, now, null, state.replyingTo?.text);
-      });
-
-      el.message.value = '';
-      el.charCount.textContent = '0';
-      window.cancelReplyFunction();
-      
-      if (data.summary) {
-        showToast(
-          `✅ ${data.summary.success}/${data.summary.total} enviados, ${data.summary.replies} como reply`,
-          'success'
-        );
-      } else {
-        showToast('Mensagem enviada com sucesso!', 'success');
+        messagesDiv.appendChild(line);
       }
       
-    } catch (error) {
-      showToast(`Erro: ${error.message}`, 'error');
-    } finally {
-      el.send.disabled = false;
-      updateUI();
+      card.appendChild(messagesDiv);
+      container.appendChild(card);
     }
   }
 
-  async function resetSession() {
-    if (!confirm('Isso desconectará a sessão atual. Continuar?')) return;
-    
-    el.resetBtn.disabled = true;
-    el.resetBtn.innerHTML = '<span class="animate-pulse">Resetando...</span>';
-    
-    try {
-      const response = await fetch(`${window.BACKEND_URL}/api/reset-session`, {
-        method: 'POST'
-      });
-      
-      if (response.ok) {
-        showToast('Sessão resetada! Aguarde novo QR...', 'success');
-        el.qr.innerHTML = '<div class="loading-skeleton w-full h-full rounded-lg"></div>';
-      } else {
-        throw new Error('Falha ao resetar');
-      }
-    } catch (error) {
-      showToast(`Erro: ${error.message}`, 'error');
-    } finally {
-      el.resetBtn.disabled = false;
-      el.resetBtn.innerHTML = `
-        <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-        </svg>
-        Gerar Novo QR Code
-      `;
-    }
-  }
-
-  async function requestInitialData() {
-    socket.emit('request-status');
-    
-    try {
-      const response = await fetch(`${window.BACKEND_URL}/api/groups`);
-      if (response.ok) {
-        const groups = await response.json();
-        state.groups = groups;
-        state.filteredGroups = groups;
-        renderGroups();
-      }
-    } catch (error) {
-      console.error('Erro ao buscar grupos iniciais:', error);
-    }
-  }
-
-  // --- Socket.IO Events ---
-  socket.on('connect', () => {
-    console.log('✅ Conectado ao servidor');
-    showToast('Conectado ao servidor', 'success');
-  });
-
-  socket.on('disconnect', () => {
-    console.log('❌ Desconectado');
-    setStatus('Desconectado', false);
-  });
-
-  socket.on('qr', ({ dataUrl }) => {
-    console.log('📱 QR Code recebido');
-    setQR(dataUrl);
-    setStatus('Aguardando escaneamento', false);
-    if (el.qrCard.classList.contains('hidden')) {
-      el.qrCard.classList.remove('hidden');
-    }
-  });
-
-  socket.on('ready', async () => {
-    console.log('✅ WhatsApp conectado');
-    setStatus('Conectado', true);
-    el.qrCard.classList.add('hidden');
-    
-    try {
-      const response = await fetch(`${window.BACKEND_URL}/api/groups`);
-      if (response.ok) {
-        const groups = await response.json();
-        state.groups = groups;
-        state.filteredGroups = groups;
-        renderGroups();
-        showToast('WhatsApp conectado!', 'success');
-      }
-    } catch (error) {
-      console.error('Erro ao buscar grupos:', error);
-    }
-  });
-
-  socket.on('disconnected', () => {
-    setStatus('Desconectado', false);
-    el.qrCard.classList.remove('hidden');
-    showToast('WhatsApp desconectado', 'warning');
-  });
-
-  socket.on('message', ({ groupId, from, text, timestamp, messageId }) => {
-    if (state.selected.has(groupId)) {
-      pushChat(groupId, from, text, timestamp, messageId);
-    }
-  });
-
-  socket.on('message_sent', ({ groupId, text, timestamp, messageId, isReply }) => {
-    console.log('Mensagem enviada:', { groupId, isReply });
-    state.stats.delivered++;
-    updateUI();
-  });
-
-  socket.on('status', ({ ready }) => {
-    if (ready) {
-      setStatus('Conectado', true);
-      el.qrCard.classList.add('hidden');
-    } else {
-      setStatus('Aguardando conexão', false);
-    }
-  });
-
-  // --- Funções Globais ---
-  window.selectAllGroups = () => {
-    state.filteredGroups.forEach(g => {
-      state.selected.add(g.id);
-      const checkbox = document.querySelector(`.group-checkbox[data-group-id="${g.id}"]`);
-      if (checkbox) checkbox.checked = true;
-      
-      // Carrega histórico de todos
-      loadGroupHistory(g.id);
-    });
-    updateUI();
-    renderChats();
-  };
-
-  window.deselectAllGroups = () => {
-    state.selected.clear();
-    document.querySelectorAll('.group-checkbox').forEach(cb => {
-      cb.checked = false;
-    });
-    updateUI();
-    renderChats();
-  };
-
-  window.cancelReplyFunction = () => {
-    state.replyingTo = null;
-    el.replyBox.classList.add('hidden');
-    document.querySelectorAll('.message-bubble > div').forEach(el => {
-      el.classList.remove('ring-2', 'ring-purple-400');
-    });
-  };
-
-  window.refreshChatsFunction = () => {
-    // Recarrega histórico de todos os grupos selecionados
-    state.selected.forEach(groupId => {
-      loadGroupHistory(groupId);
-    });
-    showToast('Atualizando chats...', 'info');
-  };
-
-  window.clearChatsFunction = () => {
-    state.chatByGroup.clear();
-    renderChats();
-    showToast('Chats limpos', 'success');
-  };
-
-  // --- Utilities ---
   function escapeHtml(text) {
-    if (!text) return '';
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
   }
 
-  function showToast(message, type = 'info') {
-    const toast = document.createElement('div');
-    toast.className = `
-      px-6 py-3 rounded-xl shadow-lg mb-3 transform translate-x-0 transition-all duration-300
-      ${type === 'success' ? 'bg-gradient-to-r from-green-500 to-emerald-600 text-white' :
-        type === 'error' ? 'bg-gradient-to-r from-red-500 to-pink-600 text-white' :
-        type === 'warning' ? 'bg-gradient-to-r from-amber-500 to-orange-600 text-white' :
-        'bg-gradient-to-r from-blue-500 to-indigo-600 text-white'}
-    `;
-    
-    toast.innerHTML = `
-      <div class="flex items-center gap-3">
-        ${type === 'success' ? '<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path></svg>' :
-          type === 'error' ? '<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"></path></svg>' :
-          type === 'warning' ? '<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path></svg>' :
-          '<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"></path></svg>'}
-        <span class="font-medium">${message}</span>
-      </div>
-    `;
-    
-    const container = document.getElementById('toast-container');
-    container.appendChild(toast);
-    
-    // Animação de entrada
-    setTimeout(() => {
-      toast.style.transform = 'translateX(0)';
-    }, 10);
-    
-    // Remove após 3 segundos
-    setTimeout(() => {
-      toast.style.transform = 'translateX(400px)';
-      toast.style.opacity = '0';
-      setTimeout(() => toast.remove(), 300);
-    }, 3000);
+  // --- Modal ---
+  function openMonitorModal() {
+    state.isModalOpen = true;
+    el.modal.classList.add('active');
+    renderChats();
   }
+
+  function closeMonitorModal() {
+    state.isModalOpen = false;
+    el.modal.classList.remove('active');
+  }
+
+  el.expandMonitor.addEventListener('click', openMonitorModal);
+  el.closeModal.addEventListener('click', closeMonitorModal);
+  el.modal.addEventListener('click', (e) => {
+    if (e.target === el.modal) closeMonitorModal();
+  });
+
+  // --- Envio de mensagens ---
+  el.send.addEventListener('click', async () => {
+    const text = el.message.value.trim();
+    if (!text) return alert('Escreva uma mensagem.');
+    const ids = Array.from(state.selected);
+    if (!ids.length) return alert('Selecione ao menos um grupo.');
+
+    const payload = { groupIds: ids, message: text };
+    if (state.replyingTo) payload.replyTo = state.replyingTo;
+
+    el.send.disabled = true;
+    try {
+      const r = await fetch(`${window.BACKEND_URL}/api/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await r.json();
+      if (!r.ok || !data.ok) throw new Error(data.error || 'Falha no envio.');
+
+      const now = Date.now();
+      for (const gid of ids) {
+        pushChat(gid, 'Você', text, now, state.replyingTo ? state.replyingTo.text : null);
+      }
+
+      el.message.value = '';
+      state.replyingTo = null;
+    } catch (e) {
+      alert('Erro ao enviar: ' + e.message);
+    } finally {
+      el.send.disabled = false;
+    }
+  });
+
+  // --- Logout ---
+  el.logoutBtn.addEventListener('click', async () => {
+    if (!confirm('Tem certeza que deseja desconectar?')) return;
+    
+    try {
+      const r = await fetch(`${window.BACKEND_URL}/api/logout`, {
+        method: 'POST'
+      });
+      
+      if (r.ok) {
+        state.groups = [];
+        state.selected.clear();
+        state.chatByGroup.clear();
+        state.replyingTo = null;
+        
+        el.groups.innerHTML = '';
+        el.chatsPreview.innerHTML = '';
+        el.chatsFull.innerHTML = '';
+        el.message.value = '';
+        
+        setStatus('Desconectado. Aguarde novo QR...', false);
+        showLogoutButton(false);
+        el.qrCard.classList.remove('hidden');
+      }
+    } catch (e) {
+      alert('Erro ao fazer logout: ' + e.message);
+    }
+  });
+
+  // --- Eventos Socket.IO ---
+  socket.on('connect', () => {
+    console.log('✅ Socket conectado ao backend');
+  });
+
+  socket.on('qr', ({ dataUrl }) => {
+    setQR(dataUrl);
+    el.qrCard.classList.remove('hidden');
+    showLogoutButton(false);
+  });
+
+  socket.on('ready', () => {
+    setStatus('WhatsApp conectado ✅', true);
+    el.qrCard.classList.add('hidden');
+    showLogoutButton(true);
+    fetchGroups();
+  });
+
+  socket.on('disconnected', () => {
+    setStatus('Desconectado. Aguarde reconexão...', false);
+  });
+
+  socket.on('logged_out', () => {
+    setStatus('Você foi desconectado. Escaneie o QR novamente.', false);
+    el.qrCard.classList.remove('hidden');
+    showLogoutButton(false);
+  });
+
+  socket.on('status', ({ ready }) => {
+    if (ready) {
+      setStatus('WhatsApp conectado ✅', true);
+      el.qrCard.classList.add('hidden');
+      showLogoutButton(true);
+      fetchGroups();
+    }
+  });
+
+  socket.on('message', ({ groupId, from, text, timestamp }) => {
+    pushChat(groupId, from, text, timestamp);
+  });
+
+  socket.on('message_sent', ({ groupId, text, timestamp }) => {
+    pushChat(groupId, 'Você', text, timestamp);
+  });
+
+  socket.on('history', ({ groupId, messages }) => {
+    if (messages && messages.length > 0) {
+      pushHistory(groupId, messages);
+    }
+  });
+
+  // Atalho: Enter + Ctrl para enviar
+  el.message.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.ctrlKey) {
+      e.preventDefault();
+      el.send.click();
+    }
+  });
 });
