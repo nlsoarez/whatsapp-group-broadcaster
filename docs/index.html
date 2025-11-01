@@ -3,120 +3,491 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>WhatsApp Broadcaster - Claro Brasil</title>
+    <title>WhatsApp Broadcaster - Professional Edition</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
-      body {
+      * {
         font-family: 'Inter', sans-serif;
-        background-color: #f7f7f7;
       }
 
-      .claro-gradient {
-        background: linear-gradient(135deg, #E60000 0%, #9b0000 100%);
+      body {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
       }
 
-      .card {
-        background: #fff;
-        border-radius: 1rem;
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
-        transition: all 0.2s ease-in-out;
+      .glass-morphism {
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.3);
       }
 
-      .card:hover {
-        transform: translateY(-1px);
+      .glass-dark {
+        background: rgba(0, 0, 0, 0.05);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(0, 0, 0, 0.1);
       }
 
-      .header-logo {
-        color: #E60000;
-        font-weight: 800;
-        font-size: 1.8rem;
-        letter-spacing: -0.5px;
+      .gradient-text {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
       }
 
-      .reply-indicator {
-        background: #f2f2f2;
-        border-left: 4px solid #E60000;
-        padding: 6px 8px;
-        margin-bottom: 6px;
-        font-size: 0.85rem;
-        font-style: italic;
+      .btn-primary {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        transition: all 0.3s ease;
+      }
+
+      .btn-primary:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 25px rgba(102, 126, 234, 0.4);
+      }
+
+      .group-item {
+        transition: all 0.2s ease;
+      }
+
+      .group-item:hover {
+        transform: translateX(5px);
+      }
+
+      .message-bubble {
+        animation: slideIn 0.3s ease;
+      }
+
+      @keyframes slideIn {
+        from {
+          opacity: 0;
+          transform: translateY(10px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
       }
 
       .scrollbar-thin::-webkit-scrollbar {
-        width: 5px;
+        width: 6px;
+        height: 6px;
       }
+
       .scrollbar-thin::-webkit-scrollbar-thumb {
-        background: #ccc;
-        border-radius: 4px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 10px;
+      }
+
+      .scrollbar-thin::-webkit-scrollbar-track {
+        background: rgba(0, 0, 0, 0.05);
+        border-radius: 10px;
+      }
+
+      .pulse-dot {
+        animation: pulse 2s infinite;
+      }
+
+      @keyframes pulse {
+        0%, 100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.5;
+        }
+      }
+
+      .chat-container {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+        gap: 1rem;
+      }
+
+      @media (max-width: 768px) {
+        .chat-container {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      .status-badge {
+        position: relative;
+        display: inline-block;
+      }
+
+      .status-badge::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        right: -8px;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #10b981;
+        animation: pulse 2s infinite;
+      }
+
+      .loading-skeleton {
+        background: linear-gradient(90deg, #f3f4f6 0%, #e5e7eb 50%, #f3f4f6 100%);
+        background-size: 200% 100%;
+        animation: skeleton 1.5s ease infinite;
+      }
+
+      @keyframes skeleton {
+        0% {
+          background-position: 200% 0;
+        }
+        100% {
+          background-position: -200% 0;
+        }
+      }
+
+      .floating-label {
+        transition: all 0.2s ease;
+      }
+
+      .search-input:focus + .search-icon {
+        color: #667eea;
+      }
+
+      .toggle-switch {
+        position: relative;
+        width: 44px;
+        height: 24px;
+      }
+
+      .toggle-switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+      }
+
+      .toggle-slider {
+        position: absolute;
+        cursor: pointer;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: #cbd5e1;
+        transition: .4s;
+        border-radius: 34px;
+      }
+
+      .toggle-slider:before {
+        position: absolute;
+        content: "";
+        height: 18px;
+        width: 18px;
+        left: 3px;
+        bottom: 3px;
+        background-color: white;
+        transition: .4s;
+        border-radius: 50%;
+      }
+
+      input:checked + .toggle-slider {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      }
+
+      input:checked + .toggle-slider:before {
+        transform: translateX(20px);
       }
     </style>
   </head>
 
-  <body class="text-slate-900">
-    <div class="max-w-7xl mx-auto p-6">
-      <header class="flex items-center justify-between mb-6">
-        <div class="header-logo">WhatsApp Broadcaster</div>
-        <div class="text-sm text-gray-600 font-medium">Powered by <span class="text-[#E60000] font-bold">Nelson Leandro</span></div>
+  <body>
+    <div class="min-h-screen p-4 md:p-6">
+      <!-- Header -->
+      <header class="glass-morphism rounded-2xl p-6 mb-6 shadow-xl">
+        <div class="flex flex-col md:flex-row items-center justify-between gap-4">
+          <div class="flex items-center gap-4">
+            <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center shadow-lg">
+              <svg class="w-7 h-7 text-white" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+              </svg>
+            </div>
+            <div>
+              <h1 class="text-2xl md:text-3xl font-bold gradient-text">WhatsApp Broadcaster</h1>
+              <p class="text-sm text-gray-600">Professional Multi-Group Messaging</p>
+            </div>
+          </div>
+          <div class="flex items-center gap-4">
+            <div id="connection-status" class="flex items-center gap-2 px-4 py-2 rounded-full glass-dark">
+              <div class="w-2 h-2 rounded-full bg-red-500 pulse-dot" id="status-dot"></div>
+              <span class="text-sm font-medium text-gray-700" id="status-text">Desconectado</span>
+            </div>
+            <div class="text-sm text-gray-600">
+              Powered by <span class="font-bold gradient-text">Nelson Leandro</span>
+            </div>
+          </div>
+        </div>
       </header>
 
-      <!-- Painéis principais -->
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-
-        <!-- Login QR -->
-        <div id="qr-card" class="card p-5 col-span-1 lg:col-span-1 flex flex-col justify-between">
-          <div>
-            <h2 class="text-lg font-semibold text-[#E60000] mb-2 flex items-center gap-2">
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-[#E60000]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582a2 2 0 011.93 1.518l1.731 6.924A2 2 0 0010.182 19H19v-5h-.582a2 2 0 01-1.93-1.518l-1.731-6.924A2 2 0 0013.818 5H5V4h-.418z"/></svg>
-              Login via QR
-            </h2>
-            <p class="text-sm text-gray-600 mb-3">Escaneie o QR Code com seu WhatsApp para conectar.</p>
-            <div id="qr" class="bg-gray-100 flex items-center justify-center rounded-lg aspect-square overflow-hidden">
-              <span class="text-gray-500 text-sm">Aguardando QR...</span>
+      <!-- Main Grid -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        <!-- QR Code Panel -->
+        <div id="qr-card" class="glass-morphism rounded-2xl p-6 shadow-xl transition-all duration-300">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center">
+              <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z"/>
+              </svg>
             </div>
-            <p id="wa-status" class="mt-2 text-sm text-gray-600"></p>
+            <div>
+              <h2 class="text-lg font-semibold text-gray-800">Autenticação</h2>
+              <p class="text-xs text-gray-500">Escaneie para conectar</p>
+            </div>
+          </div>
+          
+          <div id="qr" class="bg-white rounded-xl p-4 aspect-square flex items-center justify-center shadow-inner">
+            <div class="loading-skeleton w-full h-full rounded-lg"></div>
+          </div>
+          
+          <button id="reset-session-btn" class="mt-4 w-full px-4 py-3 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-xl font-medium hover:shadow-lg transition-all duration-300 hover:-translate-y-1">
+            <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+            </svg>
+            Gerar Novo QR Code
+          </button>
+        </div>
+
+        <!-- Groups Selection -->
+        <div class="glass-morphism rounded-2xl p-6 shadow-xl">
+          <div class="flex items-center justify-between mb-4">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-cyan-600 flex items-center justify-center">
+                <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/>
+                </svg>
+              </div>
+              <div>
+                <h2 class="text-lg font-semibold text-gray-800">Grupos</h2>
+                <p class="text-xs text-gray-500" id="groups-count">0 grupos disponíveis</p>
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <button onclick="selectAllGroups()" class="text-xs px-3 py-1 rounded-lg bg-purple-100 text-purple-700 hover:bg-purple-200 transition">
+                Todos
+              </button>
+              <button onclick="deselectAllGroups()" class="text-xs px-3 py-1 rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 transition">
+                Limpar
+              </button>
+            </div>
+          </div>
+
+          <!-- Search Bar -->
+          <div class="relative mb-4">
+            <input 
+              type="text" 
+              id="group-search" 
+              placeholder="Pesquisar grupos..." 
+              class="search-input w-full px-4 py-3 pl-10 bg-white/70 border border-gray-200 rounded-xl focus:outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-all"
+            >
+            <svg class="search-icon absolute left-3 top-3.5 w-4 h-4 text-gray-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+            </svg>
+          </div>
+
+          <!-- Groups List -->
+          <div id="groups" class="space-y-2 max-h-[400px] overflow-y-auto scrollbar-thin pr-2">
+            <div class="loading-skeleton h-12 rounded-lg mb-2"></div>
+            <div class="loading-skeleton h-12 rounded-lg mb-2"></div>
+            <div class="loading-skeleton h-12 rounded-lg"></div>
+          </div>
+
+          <!-- Selected Counter -->
+          <div class="mt-4 p-3 bg-purple-50 rounded-lg">
+            <div class="flex items-center justify-between">
+              <span class="text-sm text-gray-600">Selecionados:</span>
+              <span class="text-sm font-bold text-purple-600" id="selected-count">0</span>
+            </div>
           </div>
         </div>
 
-        <!-- Grupos -->
-        <div class="card p-5 flex flex-col">
-          <h2 class="text-lg font-semibold text-[#E60000] mb-2">Selecionar grupos</h2>
-          <div id="groups" class="space-y-2 max-h-[480px] overflow-auto scrollbar-thin"></div>
-        </div>
+        <!-- Message Composer -->
+        <div class="glass-morphism rounded-2xl p-6 shadow-xl">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center">
+              <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+              </svg>
+            </div>
+            <div class="flex-1">
+              <h2 class="text-lg font-semibold text-gray-800">Mensagem</h2>
+              <p class="text-xs text-gray-500">Compose sua mensagem</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <button class="p-2 hover:bg-gray-100 rounded-lg transition" title="Emoji">
+                <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+              </button>
+              <button class="p-2 hover:bg-gray-100 rounded-lg transition" title="Template">
+                <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                </svg>
+              </button>
+            </div>
+          </div>
 
-        <!-- Enviar mensagem -->
-        <div class="card p-5 flex flex-col">
-          <h2 class="text-lg font-semibold text-[#E60000] mb-2">Enviar mensagem</h2>
-          <textarea id="message" class="w-full border rounded-lg p-3 h-28 focus:ring-2 focus:ring-[#E60000] focus:border-[#E60000] outline-none text-gray-800" placeholder="Digite sua mensagem..."></textarea>
-          <button id="send" class="mt-3 px-4 py-2 rounded-lg claro-gradient text-white font-semibold hover:opacity-90 transition-all disabled:opacity-50">
-            Enviar para grupos selecionados
+          <!-- Reply Indicator -->
+          <div id="reply-indicator-box" class="hidden mb-3 p-3 bg-blue-50 border-l-4 border-blue-500 rounded-lg">
+            <div class="flex items-center justify-between">
+              <div class="flex-1">
+                <p class="text-xs text-blue-600 font-medium">Respondendo a:</p>
+                <p class="text-sm text-gray-700" id="reply-preview"></p>
+              </div>
+              <button onclick="cancelReply()" class="p-1 hover:bg-blue-100 rounded transition">
+                <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Message Input -->
+          <textarea 
+            id="message" 
+            rows="6" 
+            placeholder="Digite sua mensagem aqui..."
+            class="w-full px-4 py-3 bg-white/70 border border-gray-200 rounded-xl resize-none focus:outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-all scrollbar-thin"
+          ></textarea>
+
+          <!-- Character Counter -->
+          <div class="flex items-center justify-between mt-2 mb-4">
+            <span class="text-xs text-gray-500">
+              <span id="char-count">0</span> / 4096 caracteres
+            </span>
+            <div class="flex items-center gap-2">
+              <label class="toggle-switch">
+                <input type="checkbox" id="schedule-toggle">
+                <span class="toggle-slider"></span>
+              </label>
+              <span class="text-xs text-gray-600">Agendar</span>
+            </div>
+          </div>
+
+          <!-- Send Button -->
+          <button 
+            id="send" 
+            class="w-full px-6 py-3 btn-primary text-white rounded-xl font-semibold shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          >
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
+            </svg>
+            <span>Enviar Mensagem</span>
           </button>
-          <p class="text-xs text-gray-500 mt-1">Selecione os grupos antes de enviar.</p>
+
+          <!-- Quick Stats -->
+          <div class="grid grid-cols-3 gap-2 mt-4">
+            <div class="text-center p-2 bg-gray-50 rounded-lg">
+              <p class="text-xs text-gray-500">Enviadas</p>
+              <p class="text-lg font-bold text-gray-800" id="sent-count">0</p>
+            </div>
+            <div class="text-center p-2 bg-green-50 rounded-lg">
+              <p class="text-xs text-gray-500">Entregues</p>
+              <p class="text-lg font-bold text-green-600" id="delivered-count">0</p>
+            </div>
+            <div class="text-center p-2 bg-blue-50 rounded-lg">
+              <p class="text-xs text-gray-500">Lidas</p>
+              <p class="text-lg font-bold text-blue-600" id="read-count">0</p>
+            </div>
+          </div>
         </div>
       </div>
 
-      <!-- Monitoramento -->
-      <div class="card p-5 mt-6">
-        <h2 class="text-lg font-semibold text-[#E60000] mb-3">Monitoramento</h2>
-        <div id="chats" class="space-y-4 max-h-[500px] overflow-auto scrollbar-thin"></div>
+      <!-- Monitoring Section -->
+      <div class="glass-morphism rounded-2xl p-6 mt-6 shadow-xl">
+        <div class="flex items-center justify-between mb-6">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center">
+              <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+              </svg>
+            </div>
+            <div>
+              <h2 class="text-lg font-semibold text-gray-800">Monitoramento em Tempo Real</h2>
+              <p class="text-xs text-gray-500">Últimas 5 horas de conversas dos grupos selecionados</p>
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <button onclick="refreshChats()" class="p-2 hover:bg-gray-100 rounded-lg transition" title="Atualizar">
+              <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+              </svg>
+            </button>
+            <button onclick="clearChats()" class="p-2 hover:bg-gray-100 rounded-lg transition" title="Limpar">
+              <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Chats Grid -->
+        <div id="chats" class="chat-container">
+          <div class="glass-dark rounded-xl p-6 flex flex-col items-center justify-center min-h-[300px]">
+            <svg class="w-16 h-16 text-gray-400 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+            </svg>
+            <p class="text-gray-500 text-center">
+              Selecione grupos para monitorar<br>
+              <span class="text-xs">As mensagens aparecerão aqui</span>
+            </p>
+          </div>
+        </div>
       </div>
 
-      <footer class="text-xs text-gray-500 mt-8 text-center">
-        Sistema interno desenvolvido com Baileys + Socket.IO • Claro Brasil © 2025
+      <!-- Footer -->
+      <footer class="text-center mt-8 text-white/80 text-sm">
+        <p>Sistema desenvolvido com Baileys + Socket.IO</p>
+        <p class="font-semibold">Nelson Leandro © 2025</p>
       </footer>
     </div>
 
+    <!-- Toast Container -->
+    <div id="toast-container" class="fixed top-4 right-4 z-50"></div>
+
+    <!-- Scripts -->
     <script>
       window.BACKEND_URL = 'https://whatsapp-group-broadcaster.onrender.com';
+      
+      // Variáveis globais para funções do template
+      function selectAllGroups() {
+        document.querySelectorAll('#groups input[type="checkbox"]').forEach(cb => {
+          cb.checked = true;
+          cb.dispatchEvent(new Event('change'));
+        });
+      }
 
-      // Esconde o QR após conexão
-      const socket = io(window.BACKEND_URL);
-      socket.on('ready', () => {
-        const qrCard = document.getElementById('qr-card');
-        if (qrCard) qrCard.classList.add('hidden');
-      });
+      function deselectAllGroups() {
+        document.querySelectorAll('#groups input[type="checkbox"]').forEach(cb => {
+          cb.checked = false;
+          cb.dispatchEvent(new Event('change'));
+        });
+      }
+
+      function refreshChats() {
+        if (window.refreshChatsFunction) {
+          window.refreshChatsFunction();
+        }
+      }
+
+      function clearChats() {
+        if (window.clearChatsFunction) {
+          window.clearChatsFunction();
+        }
+      }
+
+      function cancelReply() {
+        if (window.cancelReplyFunction) {
+          window.cancelReplyFunction();
+        }
+      }
     </script>
-
     <script src="./app.js"></script>
   </body>
 </html>
