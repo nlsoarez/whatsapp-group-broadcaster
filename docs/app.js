@@ -1,4 +1,4 @@
-// app.js - Sistema Profissional com Monitoramento Avançado
+// app.js - Versão Otimizada e Corrigida
 document.addEventListener('DOMContentLoaded', () => {
   const socket = io(window.BACKEND_URL, {
     transports: ['websocket', 'polling'],
@@ -40,8 +40,7 @@ document.addEventListener('DOMContentLoaded', () => {
       delivered: 0,
       read: 0
     },
-    messageHistory: new Map(), // Histórico completo
-    historyTimeLimit: 5 * 60 * 60 * 1000 // 5 horas em ms
+    isLoadingHistory: new Set() // Track loading state per group
   };
 
   // --- Inicialização ---
@@ -52,7 +51,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function setQR(url) {
     if (url) {
       el.qr.innerHTML = `
-        <img src="${url}" alt="QR Code" class="w-full h-full object-contain rounded-lg animate-fadeIn" />
+        <img src="${url}" alt="QR Code" class="w-full h-full object-contain rounded-lg" />
       `;
     } else {
       el.qr.innerHTML = '<div class="loading-skeleton w-full h-full rounded-lg"></div>';
@@ -65,7 +64,6 @@ document.addEventListener('DOMContentLoaded', () => {
       ? 'w-2 h-2 rounded-full bg-green-500 pulse-dot' 
       : 'w-2 h-2 rounded-full bg-red-500 pulse-dot';
     
-    // Atualiza badge do status
     const badge = document.getElementById('connection-status');
     if (connected) {
       badge.classList.remove('glass-dark');
@@ -90,21 +88,18 @@ document.addEventListener('DOMContentLoaded', () => {
     
     state.filteredGroups.forEach(g => {
       const div = document.createElement('div');
-      div.className = 'group-item flex items-center gap-3 p-3 bg-white/50 hover:bg-white/70 rounded-xl cursor-pointer transition-all';
-      
       const isSelected = state.selected.has(g.id);
+      const messageCount = state.chatByGroup.get(g.id)?.length || 0;
+      
+      div.className = 'group-item flex items-center gap-3 p-3 bg-white/50 hover:bg-white/70 rounded-xl cursor-pointer transition-all';
+      div.dataset.groupId = g.id;
       
       div.innerHTML = `
-        <div class="relative">
-          <input type="checkbox" 
-            id="group-${g.id}" 
-            class="peer sr-only"
-            ${isSelected ? 'checked' : ''}
-          >
-          <div class="w-5 h-5 rounded border-2 ${isSelected ? 'border-purple-500 bg-purple-500' : 'border-gray-300 bg-white'} transition-all flex items-center justify-center">
-            ${isSelected ? '<svg class="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg>' : ''}
-          </div>
-        </div>
+        <input type="checkbox" 
+          class="group-checkbox w-5 h-5 rounded border-2 accent-purple-600"
+          data-group-id="${g.id}"
+          ${isSelected ? 'checked' : ''}
+        >
         
         <img 
           src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23999'%3E%3Cpath d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z'/%3E%3C/svg%3E"
@@ -117,35 +112,51 @@ document.addEventListener('DOMContentLoaded', () => {
           <p class="text-xs text-gray-500">${g.participants || 0} participantes</p>
         </div>
         
-        ${state.chatByGroup.has(g.id) ? `
+        ${messageCount > 0 ? `
           <div class="px-2 py-1 bg-purple-100 text-purple-700 rounded-full text-xs font-medium">
-            ${state.chatByGroup.get(g.id).length}
+            ${messageCount}
           </div>
+        ` : ''}
+        
+        ${state.isLoadingHistory.has(g.id) ? `
+          <div class="animate-spin h-4 w-4 border-2 border-purple-500 border-t-transparent rounded-full"></div>
         ` : ''}
       `;
       
-      // Click handler
-      div.onclick = (e) => {
-        const checkbox = div.querySelector('input[type="checkbox"]');
+      // Checkbox handler - OTIMIZADO
+      const checkbox = div.querySelector('.group-checkbox');
+      checkbox.addEventListener('click', (e) => {
+        e.stopPropagation(); // Previne duplo trigger
+        handleGroupSelection(g.id, checkbox.checked);
+      });
+      
+      // Div click handler
+      div.addEventListener('click', (e) => {
+        if (e.target === checkbox) return; // Ignora se clicou no checkbox
         checkbox.checked = !checkbox.checked;
-        
-        if (checkbox.checked) {
-          state.selected.add(g.id);
-          loadGroupHistory(g.id); // Carrega histórico ao selecionar
-        } else {
-          state.selected.delete(g.id);
-        }
-        
-        updateUI();
-        renderChats(); // Re-renderiza chats
-      };
+        handleGroupSelection(g.id, checkbox.checked);
+      });
       
       el.groups.appendChild(div);
       
-      // Carrega foto do grupo
+      // Carrega foto do grupo de forma assíncrona
       loadGroupPicture(g.id);
     });
     
+    updateUI();
+  }
+
+  function handleGroupSelection(groupId, isSelected) {
+    if (isSelected) {
+      state.selected.add(groupId);
+      loadGroupHistory(groupId); // Carrega histórico
+    } else {
+      state.selected.delete(groupId);
+      // Remove mensagens do grupo desmarcado
+      if (state.chatByGroup.has(groupId)) {
+        renderChats(); // Re-renderiza sem esse grupo
+      }
+    }
     updateUI();
   }
 
@@ -160,42 +171,76 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
     } catch (error) {
-      console.error('Erro ao carregar foto:', error);
+      // Silently fail for group pictures
     }
   }
 
   async function loadGroupHistory(groupId) {
+    if (state.isLoadingHistory.has(groupId)) return; // Evita duplicatas
+    
+    state.isLoadingHistory.add(groupId);
+    
+    // Atualiza UI para mostrar loading
+    const groupEl = document.querySelector(`.group-item[data-group-id="${groupId}"]`);
+    if (groupEl && !groupEl.querySelector('.animate-spin')) {
+      const loader = document.createElement('div');
+      loader.className = 'animate-spin h-4 w-4 border-2 border-purple-500 border-t-transparent rounded-full';
+      groupEl.appendChild(loader);
+    }
+    
     try {
-      const response = await fetch(`${window.BACKEND_URL}/api/group-history/${groupId}`);
+      // Tenta buscar do cache/debug endpoint primeiro
+      const response = await fetch(`${window.BACKEND_URL}/api/debug/cache/${groupId}`);
+      
       if (response.ok) {
-        const messages = await response.json();
+        const data = await response.json();
         
-        // Filtra mensagens das últimas 5 horas
-        const fiveHoursAgo = Date.now() - state.historyTimeLimit;
-        const recentMessages = messages.filter(m => m.timestamp > fiveHoursAgo);
-        
-        // Adiciona ao histórico
-        if (!state.messageHistory.has(groupId)) {
-          state.messageHistory.set(groupId, []);
+        if (data.messages && data.messages.length > 0) {
+          // Limpa mensagens antigas deste grupo
+          if (!state.chatByGroup.has(groupId)) {
+            state.chatByGroup.set(groupId, []);
+          }
+          
+          // Adiciona mensagens do histórico
+          data.messages.forEach(msg => {
+            if (msg.text) {
+              // Converte timestamp string para número se necessário
+              const timestamp = msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now();
+              
+              pushChat(
+                groupId, 
+                msg.fromMe ? 'Você' : msg.from || 'Desconhecido',
+                msg.text,
+                timestamp,
+                msg.id || null,
+                null,
+                true // isHistory flag
+              );
+            }
+          });
+          
+          console.log(`📜 Histórico carregado para ${groupId}: ${data.messages.length} mensagens`);
+        } else {
+          console.log(`📭 Sem histórico para ${groupId}`);
         }
-        
-        recentMessages.forEach(msg => {
-          pushChat(groupId, msg.from, msg.text, msg.timestamp, msg.messageId, null, true);
-        });
-        
-        renderChats();
       }
     } catch (error) {
-      console.error('Erro ao carregar histórico:', error);
+      console.error(`Erro ao carregar histórico de ${groupId}:`, error);
+    } finally {
+      state.isLoadingHistory.delete(groupId);
+      
+      // Remove loader
+      const loader = document.querySelector(`.group-item[data-group-id="${groupId}"] .animate-spin`);
+      if (loader) loader.remove();
+      
+      renderChats();
     }
   }
 
   function updateUI() {
-    // Atualiza contadores
     el.groupsCount.textContent = `${state.groups.length} grupos disponíveis`;
     el.selectedCount.textContent = state.selected.size;
     
-    // Atualiza botão de enviar
     const count = state.selected.size;
     if (count > 0) {
       el.send.innerHTML = `
@@ -205,6 +250,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <span>Enviar para ${count} grupo${count > 1 ? 's' : ''}</span>
       `;
       el.send.classList.remove('opacity-50', 'cursor-not-allowed');
+      el.send.disabled = false;
     } else {
       el.send.innerHTML = `
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -213,34 +259,42 @@ document.addEventListener('DOMContentLoaded', () => {
         <span>Selecione grupos primeiro</span>
       `;
       el.send.classList.add('opacity-50', 'cursor-not-allowed');
+      el.send.disabled = true;
     }
     
-    // Atualiza stats
     el.sentCount.textContent = state.stats.sent;
     el.deliveredCount.textContent = state.stats.delivered;
     el.readCount.textContent = state.stats.read;
   }
 
-  // --- Sistema de Chat Avançado ---
+  // --- Sistema de Chat ---
   function pushChat(groupId, who, text, ts, messageId, replyText, isHistory = false) {
-    // Só adiciona se o grupo estiver selecionado
-    if (!state.selected.has(groupId) && !isHistory) return;
-    
     if (!state.chatByGroup.has(groupId)) {
       state.chatByGroup.set(groupId, []);
     }
     
     const chat = state.chatByGroup.get(groupId);
     
-    // Evita duplicatas
-    const exists = chat.some(m => m.messageId === messageId && messageId);
-    if (!exists) {
-      chat.push({ who, text, ts, messageId, replyText });
-      
-      // Limita a 100 mensagens por grupo
-      if (chat.length > 100) {
-        state.chatByGroup.set(groupId, chat.slice(-100));
-      }
+    // Evita duplicatas por messageId
+    if (messageId) {
+      const exists = chat.some(m => m.messageId === messageId);
+      if (exists) return;
+    }
+    
+    chat.push({ 
+      who, 
+      text, 
+      ts: ts || Date.now(), 
+      messageId: messageId || `${Date.now()}-${Math.random()}`,
+      replyText 
+    });
+    
+    // Ordena por timestamp
+    chat.sort((a, b) => a.ts - b.ts);
+    
+    // Limita a 100 mensagens
+    if (chat.length > 100) {
+      state.chatByGroup.set(groupId, chat.slice(-100));
     }
     
     if (messageId && groupId) {
@@ -255,7 +309,6 @@ document.addEventListener('DOMContentLoaded', () => {
   function renderChats() {
     el.chats.innerHTML = '';
     
-    // Filtra apenas grupos selecionados
     const selectedGroups = Array.from(state.selected);
     
     if (selectedGroups.length === 0) {
@@ -273,56 +326,65 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     
-    // Renderiza chats dos grupos selecionados
     selectedGroups.forEach(groupId => {
       const messages = state.chatByGroup.get(groupId) || [];
       const group = state.groups.find(g => g.id === groupId);
       
-      if (messages.length === 0) return;
+      if (!group) return;
       
       const chatCard = document.createElement('div');
       chatCard.className = 'glass-dark rounded-xl p-4';
       
-      // Header do grupo
       const header = `
         <div class="flex items-center justify-between mb-3 pb-2 border-b border-gray-200">
           <div class="flex items-center gap-2">
             <div class="w-2 h-2 bg-green-500 rounded-full"></div>
-            <h3 class="font-semibold text-gray-800">${escapeHtml(group?.subject || 'Grupo')}</h3>
+            <h3 class="font-semibold text-gray-800">${escapeHtml(group.subject)}</h3>
           </div>
           <span class="text-xs text-gray-500">${messages.length} mensagens</span>
         </div>
       `;
       
-      // Container de mensagens
-      const messagesHtml = messages.slice(-20).map(m => {
-        const isMe = m.who === 'Você';
-        const time = new Date(m.ts).toLocaleTimeString('pt-BR', { 
-          hour: '2-digit', 
-          minute: '2-digit' 
-        });
-        
-        return `
-          <div class="message-bubble mb-2 ${isMe ? 'text-right' : ''}" 
-               data-message-id="${m.messageId}"
-               data-group-id="${groupId}">
-            <div class="inline-block max-w-[80%] ${
-              isMe 
-                ? 'bg-gradient-to-r from-purple-500 to-indigo-500 text-white' 
-                : 'bg-white text-gray-800'
-            } rounded-2xl px-4 py-2 shadow-md cursor-pointer hover:shadow-lg transition-shadow">
-              ${m.replyText ? `
-                <div class="text-xs ${isMe ? 'text-purple-100' : 'text-gray-500'} mb-1 italic border-l-2 ${isMe ? 'border-purple-300' : 'border-gray-300'} pl-2">
-                  ↩️ ${escapeHtml(m.replyText.substring(0, 50))}${m.replyText.length > 50 ? '...' : ''}
-                </div>
-              ` : ''}
-              ${!isMe ? `<p class="text-xs font-semibold ${isMe ? 'text-purple-100' : 'text-purple-600'} mb-1">${escapeHtml(m.who)}</p>` : ''}
-              <p class="text-sm break-words">${escapeHtml(m.text)}</p>
-              <p class="text-xs ${isMe ? 'text-purple-100' : 'text-gray-400'} mt-1">${time}</p>
-            </div>
+      let messagesHtml = '';
+      
+      if (messages.length === 0) {
+        messagesHtml = `
+          <div class="text-center py-4 text-gray-400 text-sm">
+            Sem mensagens recentes
           </div>
         `;
-      }).join('');
+      } else {
+        messagesHtml = messages.slice(-20).map(m => {
+          const isMe = m.who === 'Você';
+          const time = new Date(m.ts).toLocaleTimeString('pt-BR', { 
+            hour: '2-digit', 
+            minute: '2-digit' 
+          });
+          
+          return `
+            <div class="message-bubble mb-2 ${isMe ? 'text-right' : ''}" 
+                 data-message-id="${m.messageId}"
+                 data-message-text="${escapeHtml(m.text)}"
+                 data-message-from="${escapeHtml(m.who)}"
+                 data-group-id="${groupId}">
+              <div class="inline-block max-w-[80%] ${
+                isMe 
+                  ? 'bg-gradient-to-r from-purple-500 to-indigo-500 text-white' 
+                  : 'bg-white text-gray-800'
+              } rounded-2xl px-4 py-2 shadow-md cursor-pointer hover:shadow-lg transition-all">
+                ${m.replyText ? `
+                  <div class="text-xs ${isMe ? 'text-purple-100' : 'text-gray-500'} mb-1 italic border-l-2 ${isMe ? 'border-purple-300' : 'border-gray-300'} pl-2">
+                    ↩️ ${escapeHtml(m.replyText.substring(0, 50))}${m.replyText.length > 50 ? '...' : ''}
+                  </div>
+                ` : ''}
+                ${!isMe ? `<p class="text-xs font-semibold text-purple-600 mb-1">${escapeHtml(m.who)}</p>` : ''}
+                <p class="text-sm break-words">${escapeHtml(m.text)}</p>
+                <p class="text-xs ${isMe ? 'text-purple-100' : 'text-gray-400'} mt-1">${time}</p>
+              </div>
+            </div>
+          `;
+        }).join('');
+      }
       
       chatCard.innerHTML = header + `
         <div class="max-h-[400px] overflow-y-auto scrollbar-thin pr-2">
@@ -330,13 +392,13 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
       `;
       
-      // Adiciona event listeners para reply
+      // Event listeners para reply
       chatCard.querySelectorAll('.message-bubble').forEach(bubble => {
-        bubble.onclick = () => {
-          const messageEl = bubble.querySelector('.inline-block');
-          const messageText = bubble.querySelector('p.text-sm').textContent;
-          const sender = bubble.querySelector('p.font-semibold')?.textContent || 'Você';
-          const messageId = bubble.dataset.messageId;
+        bubble.addEventListener('click', function() {
+          const messageText = this.dataset.messageText;
+          const sender = this.dataset.messageFrom;
+          const messageId = this.dataset.messageId;
+          const groupId = this.dataset.groupId;
           
           setReply({
             groupId: groupId,
@@ -346,11 +408,11 @@ document.addEventListener('DOMContentLoaded', () => {
           });
           
           // Visual feedback
-          document.querySelectorAll('.message-bubble .inline-block').forEach(el => {
+          document.querySelectorAll('.message-bubble > div').forEach(el => {
             el.classList.remove('ring-2', 'ring-purple-400');
           });
-          messageEl.classList.add('ring-2', 'ring-purple-400');
-        };
+          this.querySelector('div').classList.add('ring-2', 'ring-purple-400');
+        });
       });
       
       el.chats.appendChild(chatCard);
@@ -377,13 +439,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- Event Listeners ---
   function initializeEventListeners() {
-    // Pesquisa de grupos
+    // Pesquisa de grupos - com debounce
+    let searchTimeout;
     el.groupSearch.addEventListener('input', (e) => {
-      const search = e.target.value.toLowerCase();
-      state.filteredGroups = state.groups.filter(g => 
-        g.subject.toLowerCase().includes(search)
-      );
-      renderGroups();
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(() => {
+        const search = e.target.value.toLowerCase();
+        state.filteredGroups = state.groups.filter(g => 
+          g.subject.toLowerCase().includes(search)
+        );
+        renderGroups();
+      }, 300); // Debounce de 300ms
     });
 
     // Contador de caracteres
@@ -396,7 +462,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Atalhos de teclado
     document.addEventListener('keydown', (e) => {
-      if (e.ctrlKey && e.key === 'Enter') {
+      if (e.ctrlKey && e.key === 'Enter' && !el.send.disabled) {
         sendMessage();
       }
       if (e.key === 'Escape') {
@@ -409,6 +475,8 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function sendMessage() {
+    if (el.send.disabled) return;
+    
     const text = el.message.value.trim();
     
     if (!text) {
@@ -447,21 +515,17 @@ document.addEventListener('DOMContentLoaded', () => {
         throw new Error(data.error || 'Falha no envio');
       }
 
-      // Atualiza stats
       state.stats.sent += ids.length;
       
-      // Adiciona mensagem aos chats
       const now = Date.now();
       ids.forEach(groupId => {
         pushChat(groupId, 'Você', text, now, null, state.replyingTo?.text);
       });
 
-      // Limpa campos
       el.message.value = '';
       el.charCount.textContent = '0';
       window.cancelReplyFunction();
       
-      // Feedback
       if (data.summary) {
         showToast(
           `✅ ${data.summary.success}/${data.summary.total} enviados, ${data.summary.replies} como reply`,
@@ -470,8 +534,6 @@ document.addEventListener('DOMContentLoaded', () => {
       } else {
         showToast('Mensagem enviada com sucesso!', 'success');
       }
-      
-      updateUI();
       
     } catch (error) {
       showToast(`Erro: ${error.message}`, 'error');
@@ -514,7 +576,6 @@ document.addEventListener('DOMContentLoaded', () => {
   async function requestInitialData() {
     socket.emit('request-status');
     
-    // Tenta buscar grupos se já conectado
     try {
       const response = await fetch(`${window.BACKEND_URL}/api/groups`);
       if (response.ok) {
@@ -524,7 +585,7 @@ document.addEventListener('DOMContentLoaded', () => {
         renderGroups();
       }
     } catch (error) {
-      console.error('Erro ao buscar grupos:', error);
+      console.error('Erro ao buscar grupos iniciais:', error);
     }
   }
 
@@ -535,7 +596,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   socket.on('disconnect', () => {
-    console.log('❌ Desconectado do servidor');
+    console.log('❌ Desconectado');
     setStatus('Desconectado', false);
   });
 
@@ -553,7 +614,6 @@ document.addEventListener('DOMContentLoaded', () => {
     setStatus('Conectado', true);
     el.qrCard.classList.add('hidden');
     
-    // Busca grupos
     try {
       const response = await fetch(`${window.BACKEND_URL}/api/groups`);
       if (response.ok) {
@@ -561,7 +621,7 @@ document.addEventListener('DOMContentLoaded', () => {
         state.groups = groups;
         state.filteredGroups = groups;
         renderGroups();
-        showToast('WhatsApp conectado! Grupos carregados.', 'success');
+        showToast('WhatsApp conectado!', 'success');
       }
     } catch (error) {
       console.error('Erro ao buscar grupos:', error);
@@ -575,7 +635,6 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   socket.on('message', ({ groupId, from, text, timestamp, messageId }) => {
-    // Só adiciona se o grupo estiver selecionado
     if (state.selected.has(groupId)) {
       pushChat(groupId, from, text, timestamp, messageId);
     }
@@ -587,18 +646,52 @@ document.addEventListener('DOMContentLoaded', () => {
     updateUI();
   });
 
+  socket.on('status', ({ ready }) => {
+    if (ready) {
+      setStatus('Conectado', true);
+      el.qrCard.classList.add('hidden');
+    } else {
+      setStatus('Aguardando conexão', false);
+    }
+  });
+
   // --- Funções Globais ---
+  window.selectAllGroups = () => {
+    state.filteredGroups.forEach(g => {
+      state.selected.add(g.id);
+      const checkbox = document.querySelector(`.group-checkbox[data-group-id="${g.id}"]`);
+      if (checkbox) checkbox.checked = true;
+      
+      // Carrega histórico de todos
+      loadGroupHistory(g.id);
+    });
+    updateUI();
+    renderChats();
+  };
+
+  window.deselectAllGroups = () => {
+    state.selected.clear();
+    document.querySelectorAll('.group-checkbox').forEach(cb => {
+      cb.checked = false;
+    });
+    updateUI();
+    renderChats();
+  };
+
   window.cancelReplyFunction = () => {
     state.replyingTo = null;
     el.replyBox.classList.add('hidden');
-    document.querySelectorAll('.message-bubble .inline-block').forEach(el => {
+    document.querySelectorAll('.message-bubble > div').forEach(el => {
       el.classList.remove('ring-2', 'ring-purple-400');
     });
   };
 
   window.refreshChatsFunction = () => {
-    renderChats();
-    showToast('Chats atualizados', 'success');
+    // Recarrega histórico de todos os grupos selecionados
+    state.selected.forEach(groupId => {
+      loadGroupHistory(groupId);
+    });
+    showToast('Atualizando chats...', 'info');
   };
 
   window.clearChatsFunction = () => {
@@ -609,15 +702,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- Utilities ---
   function escapeHtml(text) {
+    if (!text) return '';
     const div = document.createElement('div');
-    div.textContent = text || '';
+    div.textContent = text;
     return div.innerHTML;
   }
 
   function showToast(message, type = 'info') {
     const toast = document.createElement('div');
     toast.className = `
-      px-6 py-3 rounded-xl shadow-lg mb-3 animate-slideIn
+      px-6 py-3 rounded-xl shadow-lg mb-3 transform translate-x-0 transition-all duration-300
       ${type === 'success' ? 'bg-gradient-to-r from-green-500 to-emerald-600 text-white' :
         type === 'error' ? 'bg-gradient-to-r from-red-500 to-pink-600 text-white' :
         type === 'warning' ? 'bg-gradient-to-r from-amber-500 to-orange-600 text-white' :
@@ -637,9 +731,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const container = document.getElementById('toast-container');
     container.appendChild(toast);
     
+    // Animação de entrada
     setTimeout(() => {
+      toast.style.transform = 'translateX(0)';
+    }, 10);
+    
+    // Remove após 3 segundos
+    setTimeout(() => {
+      toast.style.transform = 'translateX(400px)';
       toast.style.opacity = '0';
-      toast.style.transform = 'translateX(100%)';
       setTimeout(() => toast.remove(), 300);
     }, 3000);
   }
