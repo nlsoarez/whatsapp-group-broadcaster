@@ -177,8 +177,12 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function loadGroupHistory(groupId) {
-    if (state.isLoadingHistory.has(groupId)) return; // Evita duplicatas
+    if (state.isLoadingHistory.has(groupId)) {
+      console.log(`⏳ Já está carregando histórico de ${groupId}`);
+      return;
+    }
     
+    console.log(`🔄 Iniciando carregamento de histórico para ${groupId}`);
     state.isLoadingHistory.add(groupId);
     
     // Atualiza UI para mostrar loading
@@ -190,43 +194,54 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     try {
-      // Tenta buscar do cache/debug endpoint primeiro
-      const response = await fetch(`${window.BACKEND_URL}/api/debug/cache/${groupId}`);
+      // Tenta buscar do cache/debug endpoint
+      const url = `${window.BACKEND_URL}/api/debug/cache/${encodeURIComponent(groupId)}`;
+      console.log(`🌐 Buscando histórico em: ${url}`);
+      
+      const response = await fetch(url);
+      console.log(`📡 Response status: ${response.status}`);
       
       if (response.ok) {
         const data = await response.json();
+        console.log(`📦 Dados recebidos:`, data);
         
         if (data.messages && data.messages.length > 0) {
-          // Limpa mensagens antigas deste grupo
-          if (!state.chatByGroup.has(groupId)) {
-            state.chatByGroup.set(groupId, []);
-          }
+          // Limpa mensagens antigas deste grupo (não duplicar)
+          state.chatByGroup.set(groupId, []);
           
+          let addedCount = 0;
           // Adiciona mensagens do histórico
           data.messages.forEach(msg => {
-            if (msg.text) {
+            if (msg.text && msg.text.trim()) {
               // Converte timestamp string para número se necessário
               const timestamp = msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now();
               
               pushChat(
                 groupId, 
-                msg.fromMe ? 'Você' : msg.from || 'Desconhecido',
+                msg.fromMe ? 'Você' : (msg.from || 'Desconhecido'),
                 msg.text,
                 timestamp,
-                msg.id || null,
+                msg.id || `hist-${Date.now()}-${Math.random()}`,
                 null,
                 true // isHistory flag
               );
+              addedCount++;
             }
           });
           
-          console.log(`📜 Histórico carregado para ${groupId}: ${data.messages.length} mensagens`);
+          console.log(`✅ ${addedCount}/${data.messages.length} mensagens adicionadas ao histórico de ${groupId}`);
+          showToast(`Histórico carregado: ${addedCount} mensagens`, 'success');
         } else {
-          console.log(`📭 Sem histórico para ${groupId}`);
+          console.log(`📭 Sem mensagens no histórico de ${groupId}`);
+          showToast('Sem histórico disponível para este grupo', 'info');
         }
+      } else {
+        console.error(`❌ Erro HTTP ${response.status} ao buscar histórico`);
+        showToast(`Erro ao carregar histórico (${response.status})`, 'error');
       }
     } catch (error) {
-      console.error(`Erro ao carregar histórico de ${groupId}:`, error);
+      console.error(`❌ Erro ao carregar histórico de ${groupId}:`, error);
+      showToast(`Erro: ${error.message}`, 'error');
     } finally {
       state.isLoadingHistory.delete(groupId);
       
@@ -234,6 +249,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const loader = document.querySelector(`.group-item[data-group-id="${groupId}"] .animate-spin`);
       if (loader) loader.remove();
       
+      // Sempre renderiza, mesmo sem mensagens
       renderChats();
     }
   }
