@@ -1,12 +1,23 @@
-// backend/index.js
+// backend/index.js - VERSÃO MELHORADA COM LOGOUT E HISTÓRICO COMPLETO
 import express from 'express'
 import http from 'http'
 import { Server } from 'socket.io'
-import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } from '@whiskeysockets/baileys'
+import makeWASocket, { 
+  useMultiFileAuthState, 
+  DisconnectReason,
+  fetchLatestBaileysVersion,
+  makeCacheableSignalKeyStore,
+  Browsers
+} from '@whiskeysockets/baileys'
 import pino from 'pino'
 import cors from 'cors'
+import qrcode from 'qrcode'
 import fs from 'fs'
 import path from 'path'
+import { fileURLToPath } from 'url'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
 const app = express()
 app.use(express.json())
@@ -14,304 +25,615 @@ app.use(cors())
 
 const server = http.createServer(app)
 const io = new Server(server, { 
-  cors: { origin: '*' },
+  cors: { 
+    origin: '*',
+    methods: ['GET', 'POST']
+  },
+  transports: ['websocket', 'polling'],
   pingTimeout: 60000,
   pingInterval: 25000
 })
 
-let sock
+let sock = null
 let ready = false
-const store = { messages: {}, lastSync: {} }
+let qrRetries = 0
+const MAX_QR_RETRIES = 5
+
+// Store expandido para melhor busca de mensagens
+const store = { 
+  messages: {},        // mensagens por grupo
+  sentMessages: {},    // mensagens enviadas
+  messagePatterns: {}  // padrões de mensagem para matching
+}
+
+// Garante que o diretório auth existe
+const AUTH_DIR = path.join(__dirname, 'auth')
+if (!fs.existsSync(AUTH_DIR)) {
+  fs.mkdirSync(AUTH_DIR, { recursive: true })
+  console.log('📁 Diretório auth criado')
+}
+
+// ---------------------------
+// Funções auxiliares
+// ---------------------------
+
+// Normaliza texto para comparação
+function normalizeText(text) {
+  if (!text) return ''
+  return text.toLowerCase().trim().replace(/\s+/g, ' ')
+}
+
+// Calcula similaridade entre dois textos (0 a 1)
+function textSimilarity(text1, text2) {
+  const norm1 = normalizeText(text1)
+  const norm2 = normalizeText(text2)
+  
+  if (norm1 === norm2) return 1
+  
+  // Similaridade simples baseada em palavras comuns
+  const words1 = new Set(norm1.split(' '))
+  const words2 = new Set(norm2.split(' '))
+  
+  const intersection = new Set([...words1].filter(x => words2.has(x)))
+  const union = new Set([...words1, ...words2])
+  
+  return intersection.size / union.size
+}
+
+// Busca mensagem similar em um grupo
+function findSimilarMessage(groupId, targetText, senderName = null, threshold = 0.7) {
+  const groupMessages = store.messages[groupId] || []
+  
+  // Primeiro tenta busca exata
+  let bestMatch = groupMessages.find(m => {
+    const msgText = m.message?.conversation || m.message?.extendedTextMessage?.text
+    return msgText === targetText
+  })
+  
+  if (bestMatch) return bestMatch
+  
+  // Se não encontrar exata, busca por similaridade
+  let bestSimilarity = 0
+  
+  for (const msg of groupMessages) {
+    const msgText = msg.message?.conversation || msg.message?.extendedTextMessage?.text
+    if (!msgText) continue
+    
+    const similarity = textSimilarity(msgText, targetText)
+    
+    // Se tiver nome do remetente, dá preferência a mensagens da mesma pessoa
+    const senderBonus = senderName && msg.pushName === senderName ? 0.1 : 0
+    const finalScore = similarity + senderBonus
+    
+    if (finalScore > bestSimilarity && finalScore >= threshold) {
+      bestSimilarity = finalScore
+      bestMatch = msg
+    }
+  }
+  
+  return bestMatch
+}
+
+// Limpa sessão
+function clearAuthState() {
+  try {
+    if (fs.existsSync(AUTH_DIR)) {
+      fs.rmSync(AUTH_DIR, { recursive: true, force: true })
+      fs.mkdirSync(AUTH_DIR, { recursive: true })
+      console.log('🧹 Sessão antiga removida')
+    }
+  } catch (error) {
+    console.error('Erro ao limpar sessão:', error)
+  }
+}
+
+// Gera QR Code
+async function generateQRCode(qr) {
+  try {
+    const dataUrl = await qrcode.toDataURL(qr, {
+      width: 300,
+      margin: 2
+    })
+    return dataUrl
+  } catch (error) {
+    console.error('Erro ao gerar QR Code:', error)
+    return null
+  }
+}
 
 // ---------------------------
 // Inicialização do WhatsApp
 // ---------------------------
-async function startWA() {
-  const { state, saveCreds } = await useMultiFileAuthState('auth')
-  const { version } = await fetchLatestBaileysVersion()
-  
-  sock = makeWASocket({
-    printQRInTerminal: false,
-    auth: state,
-    logger: pino({ level: 'silent' }),
-    version,
-    keepAliveIntervalMs: 50000,
-    markOnlineOnConnect: true
-  })
-
-  sock.ev.on('connection.update', async ({ qr, connection, lastDisconnect }) => {
-    if (qr) {
-      const dataUrl = await awaitQRCode(qr)
-      io.emit('qr', { dataUrl })
+async function startWA(forceNewSession = false) {
+  try {
+    if (forceNewSession || qrRetries > MAX_QR_RETRIES) {
+      clearAuthState()
+      qrRetries = 0
     }
+
+    console.log('📱 Iniciando conexão WhatsApp...')
     
-    if (connection === 'open') {
-      ready = true
-      io.emit('ready')
-      console.log('✅ WhatsApp conectado!')
-      
-      // Sincroniza histórico após conexão
-      setTimeout(() => syncAllGroupsHistory(), 2000)
-    } else if (connection === 'close') {
-      ready = false
-      io.emit('disconnected')
-      
-      const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut
-      console.log('❌ Desconectado:', lastDisconnect?.error?.message)
-      
-      if (shouldReconnect) {
-        console.log('🔄 Tentando reconectar em 5s...')
-        setTimeout(startWA, 5000)
-      } else {
-        console.log('🚪 Logout detectado - aguardando novo login')
-        io.emit('logged_out')
+    const { version, isLatest } = await fetchLatestBaileysVersion()
+    console.log(`📦 Baileys v${version.join('.')} ${isLatest ? '(última)' : ''}`)
+    
+    const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR)
+    
+    sock = makeWASocket({
+      version,
+      printQRInTerminal: false,
+      auth: {
+        creds: state.creds,
+        keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' }))
+      },
+      logger: pino({ level: 'error' }),
+      browser: Browsers.ubuntu('Chrome'),
+      connectTimeoutMs: 60000,
+      keepAliveIntervalMs: 30000, // Aumentado para 30s
+      emitOwnEvents: true,
+      generateHighQualityLinkPreview: true,
+      syncFullHistory: false,
+      markOnlineOnConnect: true,
+      // IMPORTANTE: Remove timeout de inatividade
+      defaultQueryTimeoutMs: undefined,
+      getMessage: async (key) => {
+        const jid = key.remoteJid
+        const messageList = store.messages[jid] || []
+        return messageList.find(m => m.key.id === key.id)?.message || undefined
       }
-    }
-  })
+    })
 
-  sock.ev.on('creds.update', saveCreds)
+    // Connection handler
+    sock.ev.on('connection.update', async (update) => {
+      const { qr, connection, lastDisconnect } = update
+      
+      if (qr) {
+        qrRetries++
+        console.log(`📱 QR Code (tentativa ${qrRetries}/${MAX_QR_RETRIES})`)
+        
+        const qrDataUrl = await generateQRCode(qr)
+        if (qrDataUrl) {
+          io.emit('qr', { dataUrl: qrDataUrl })
+        }
+        
+        if (qrRetries > MAX_QR_RETRIES) {
+          console.log('⚠️ Muitas tentativas, reiniciando...')
+          setTimeout(() => startWA(true), 3000)
+        }
+      }
+      
+      if (connection === 'open') {
+        ready = true
+        qrRetries = 0
+        io.emit('ready')
+        console.log('✅ WhatsApp conectado!')
+      } else if (connection === 'close') {
+        ready = false
+        io.emit('disconnected')
+        
+        const statusCode = lastDisconnect?.error?.output?.statusCode
+        const shouldReconnect = statusCode !== DisconnectReason.loggedOut
+        
+        if (statusCode === 405 || statusCode === DisconnectReason.badSession) {
+          clearAuthState()
+        }
+        
+        if (shouldReconnect) {
+          const delay = 10000
+          console.log(`🔄 Reconectando em ${delay/1000}s...`)
+          setTimeout(() => startWA(statusCode === 405), delay)
+        } else {
+          console.log('🚪 Logout realizado - aguardando novo QR')
+        }
+      }
+    })
 
-  sock.ev.on('messages.upsert', async ({ messages }) => {
-    for (const msg of messages) {
-      const from = msg.key.remoteJid
-      if (!from?.endsWith('@g.us')) continue // Só grupos
-      
-      if (!store.messages[from]) store.messages[from] = []
-      
-      // Evita duplicatas
-      const exists = store.messages[from].find(m => m.key.id === msg.key.id)
-      if (!exists) store.messages[from].push(msg)
+    sock.ev.on('creds.update', saveCreds)
 
-      const text =
-        msg.message?.conversation ||
-        msg.message?.extendedTextMessage?.text ||
-        '(mídia)'
-      
-      const participant = msg.key.participant || msg.key.remoteJid
-      const name = msg.pushName || participant?.split('@')[0] || 'Desconhecido'
-      
-      io.emit('message', {
-        groupId: from,
-        from: name,
-        text,
-        timestamp: (msg.messageTimestamp || Date.now() / 1000) * 1000
-      })
-    }
-  })
+    // Processar mensagens com armazenamento inteligente
+    sock.ev.on('messages.upsert', async (upsert) => {
+      try {
+        const { messages } = upsert
+        
+        for (const msg of messages) {
+          const from = msg.key.remoteJid
+          if (!from || from === 'status@broadcast') continue
+          
+          // Armazena mensagem
+          if (!store.messages[from]) store.messages[from] = []
+          
+          const msgData = {
+            key: msg.key,
+            message: msg.message,
+            messageTimestamp: msg.messageTimestamp,
+            pushName: msg.pushName || msg.key.participant?.split('@')[0] || 'Usuário'
+          }
+          
+          store.messages[from].push(msgData)
+          
+          // Armazena padrão de mensagem para busca posterior
+          const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text
+          if (text) {
+            const normalizedText = normalizeText(text)
+            if (!store.messagePatterns[normalizedText]) {
+              store.messagePatterns[normalizedText] = []
+            }
+            store.messagePatterns[normalizedText].push({
+              groupId: from,
+              messageId: msg.key.id,
+              sender: msgData.pushName
+            })
+          }
+          
+          // Limita cache a 200 mensagens por grupo
+          if (store.messages[from].length > 200) {
+            store.messages[from] = store.messages[from].slice(-200)
+          }
+
+          // Emite para frontend
+          if (!msg.key.fromMe && from.includes('@g.us')) {
+            io.emit('message', {
+              groupId: from,
+              from: msgData.pushName,
+              text: text || '(mídia)',
+              timestamp: msg.messageTimestamp * 1000,
+              messageId: msg.key.id
+            })
+          }
+        }
+      } catch (error) {
+        console.error('Erro ao processar mensagens:', error)
+      }
+    })
+    
+  } catch (error) {
+    console.error('❌ Erro ao iniciar WhatsApp:', error)
+    setTimeout(() => startWA(true), 15000)
+  }
 }
 
 // ---------------------------
-// Sincroniza histórico de todos os grupos
+// REST: Envio de mensagens
 // ---------------------------
-async function syncAllGroupsHistory() {
+app.post('/api/send', async (req, res) => {
   try {
-    const groups = Object.values(await sock.groupFetchAllParticipating())
-    console.log(`📥 Sincronizando histórico de ${groups.length} grupos...`)
+    const { groupIds, message, replyTo: replyInfo } = req.body
     
-    for (const group of groups) {
-      const history = await syncGroupHistory(group.id)
-      
-      // Envia histórico para o frontend
-      if (history.length > 0) {
-        io.emit('history', {
-          groupId: group.id,
-          messages: history.map(msg => ({
-            from: msg.pushName || msg.key.participant?.split('@')[0] || 'Desconhecido',
-            text: msg.message?.conversation || msg.message?.extendedTextMessage?.text || '(mídia)',
-            timestamp: (msg.messageTimestamp || Date.now() / 1000) * 1000
-          }))
+    if (!sock || !ready) {
+      return res.status(503).json({ error: 'WhatsApp não conectado' })
+    }
+    
+    if (!groupIds?.length) {
+      return res.status(400).json({ error: 'Nenhum grupo selecionado' })
+    }
+    
+    if (!message?.trim()) {
+      return res.status(400).json({ error: 'Mensagem vazia' })
+    }
+    
+    console.log(`📤 Enviando para ${groupIds.length} grupo(s)${replyInfo ? ' como reply' : ''}`)
+    
+    const results = []
+    
+    for (const gid of groupIds) {
+      try {
+        let sentMessage = null
+        let replyFound = false
+        
+        // Se tem replyInfo, tenta fazer reply inteligente
+        if (replyInfo?.groupId && replyInfo?.text) {
+          // Estratégia 1: Se é reply no mesmo grupo, busca exata
+          if (replyInfo.groupId === gid) {
+            const groupMessages = store.messages[gid] || []
+            const originalMessage = groupMessages.find(m => {
+              const msgText = m.message?.conversation || m.message?.extendedTextMessage?.text
+              return msgText === replyInfo.text
+            })
+            
+            if (originalMessage) {
+              sentMessage = await sock.sendMessage(gid, 
+                { text: message },
+                { quoted: originalMessage }
+              )
+              replyFound = true
+              console.log(`✅ Reply direto em ${gid.split('@')[0]}`)
+            }
+          }
+          
+          // Estratégia 2: Busca mensagem similar no grupo atual
+          if (!replyFound && replyInfo.text) {
+            const similarMsg = findSimilarMessage(
+              gid, 
+              replyInfo.text, 
+              replyInfo.from,
+              0.6 // threshold de 60% de similaridade
+            )
+            
+            if (similarMsg) {
+              sentMessage = await sock.sendMessage(gid, 
+                { text: message },
+                { quoted: similarMsg }
+              )
+              replyFound = true
+              console.log(`✅ Reply por similaridade em ${gid.split('@')[0]}`)
+            }
+          }
+          
+          // Estratégia 3: Se não achou similar, tenta buscar última mensagem do mesmo remetente
+          if (!replyFound && replyInfo.from) {
+            const groupMessages = store.messages[gid] || []
+            const lastFromSender = [...groupMessages].reverse().find(m => 
+              m.pushName === replyInfo.from && 
+              (m.message?.conversation || m.message?.extendedTextMessage?.text)
+            )
+            
+            if (lastFromSender) {
+              sentMessage = await sock.sendMessage(gid, 
+                { text: message },
+                { quoted: lastFromSender }
+              )
+              replyFound = true
+              console.log(`✅ Reply para última msg de ${replyInfo.from} em ${gid.split('@')[0]}`)
+            }
+          }
+        }
+        
+        // Se não conseguiu fazer reply ou não era pra fazer, envia normal
+        if (!sentMessage) {
+          // Se era pra ser reply mas não achou, adiciona contexto
+          const finalMessage = replyInfo && !replyFound
+            ? `↩️ @${replyInfo.from || 'usuário'}: "${replyInfo.text?.substring(0, 50)}..."\n\n${message}`
+            : message
+            
+          sentMessage = await sock.sendMessage(gid, { text: finalMessage })
+          console.log(`📨 Mensagem ${replyInfo && !replyFound ? 'com contexto' : 'normal'} em ${gid.split('@')[0]}`)
+        }
+        
+        // Armazena mensagem enviada
+        if (sentMessage) {
+          const msgData = {
+            key: sentMessage.key,
+            message: { conversation: message },
+            messageTimestamp: Date.now() / 1000,
+            pushName: 'Você'
+          }
+          
+          if (!store.messages[gid]) store.messages[gid] = []
+          store.messages[gid].push(msgData)
+        }
+        
+        // Emite confirmação
+        io.emit('message_sent', { 
+          groupId: gid, 
+          text: message, 
+          timestamp: Date.now(),
+          messageId: sentMessage?.key?.id,
+          isReply: replyFound
+        })
+        
+        results.push({ 
+          groupId: gid, 
+          success: true, 
+          messageId: sentMessage?.key?.id,
+          replyFound: replyFound
+        })
+        
+      } catch (error) {
+        console.error(`❌ Erro em ${gid}:`, error.message)
+        results.push({ 
+          groupId: gid, 
+          success: false, 
+          error: error.message 
         })
       }
-    }
-    
-    console.log('✅ Histórico sincronizado!')
-  } catch (e) {
-    console.error('Erro ao sincronizar histórico:', e)
-  }
-}
-
-// ---------------------------
-// Busca histórico de um grupo
-// ---------------------------
-async function syncGroupHistory(groupId, limit = 30) {
-  try {
-    if (!sock || !ready) return []
-    
-    const lastSync = store.lastSync[groupId]
-    if (lastSync && Date.now() - lastSync < 30000) {
-      return store.messages[groupId] || []
-    }
-    
-    store.lastSync[groupId] = Date.now()
-    
-    // Busca mensagens do Baileys
-    const messages = await sock.fetchMessagesFromWA(groupId, limit)
-    
-    if (!store.messages[groupId]) store.messages[groupId] = []
-    
-    for (const msg of messages) {
-      const exists = store.messages[groupId].find(m => m.key.id === msg.key.id)
-      if (!exists) {
-        store.messages[groupId].unshift(msg)
+      
+      // Pequeno delay entre envios para evitar rate limit
+      if (groupIds.length > 1) {
+        await new Promise(resolve => setTimeout(resolve, 500))
       }
     }
     
-    // Limita cache
-    if (store.messages[groupId].length > 100) {
-      store.messages[groupId] = store.messages[groupId].slice(-100)
-    }
+    // Resumo do envio
+    const successCount = results.filter(r => r.success).length
+    const replyCount = results.filter(r => r.replyFound).length
     
-    return messages
+    console.log(`📊 Resultado: ${successCount}/${groupIds.length} enviados, ${replyCount} como reply`)
+    
+    res.json({ 
+      ok: true, 
+      results,
+      summary: {
+        total: groupIds.length,
+        success: successCount,
+        replies: replyCount
+      }
+    })
+    
   } catch (e) {
-    console.error(`Erro ao buscar histórico do grupo ${groupId}:`, e.message)
-    return []
+    console.error('Erro geral:', e)
+    res.status(500).json({ 
+      error: 'Falha ao enviar', 
+      details: e.message 
+    })
   }
-}
+})
 
 // ---------------------------
-// Gera QR como base64
-// ---------------------------
-async function awaitQRCode(qr) {
-  const qrcode = await import('qrcode')
-  return await qrcode.toDataURL(qr)
-}
-
-// ---------------------------
-// REST: lista grupos
+// REST: Listar grupos
 // ---------------------------
 app.get('/api/groups', async (req, res) => {
   try {
-    if (!sock || !ready) return res.status(503).json({ error: 'WhatsApp não conectado' })
-    const groups = Object.values(await sock.groupFetchAllParticipating()).map(g => ({
+    if (!sock || !ready) {
+      return res.status(503).json({ error: 'WhatsApp não conectado' })
+    }
+    
+    const groups = await sock.groupFetchAllParticipating()
+    const groupList = Object.values(groups).map(g => ({
       id: g.id,
-      subject: g.subject
+      subject: g.subject || 'Grupo sem nome',
+      participants: g.participants?.length || 0
     }))
-    res.json(groups)
+    
+    res.json(groupList)
   } catch (e) {
-    console.error(e)
+    console.error('Erro ao listar grupos:', e)
     res.status(500).json({ error: 'Falha ao listar grupos' })
   }
 })
 
 // ---------------------------
-// REST: foto do grupo
+// REST: Foto do grupo
 // ---------------------------
 app.get('/api/group-picture/:jid', async (req, res) => {
   try {
-    if (!sock || !ready) return res.status(503).end()
-    const url = await sock.profilePictureUrl(req.params.jid, 'image')
-    if (!url) return res.status(204).end()
+    if (!sock || !ready) {
+      return res.status(503).end()
+    }
+    
+    const url = await sock.profilePictureUrl(req.params.jid, 'image').catch(() => null)
+    
+    if (!url) {
+      return res.status(204).end()
+    }
+    
     res.json({ url })
-  } catch {
+  } catch (error) {
     res.status(204).end()
   }
 })
 
 // ---------------------------
-// REST: histórico de um grupo
-// ---------------------------
-app.get('/api/history/:groupId', async (req, res) => {
-  try {
-    if (!sock || !ready) return res.status(503).json({ error: 'WhatsApp não conectado' })
-    
-    const messages = await syncGroupHistory(req.params.groupId, 50)
-    
-    const formatted = messages.map(msg => ({
-      from: msg.pushName || msg.key.participant?.split('@')[0] || 'Desconhecido',
-      text: msg.message?.conversation || msg.message?.extendedTextMessage?.text || '(mídia)',
-      timestamp: (msg.messageTimestamp || Date.now() / 1000) * 1000
-    }))
-    
-    res.json(formatted)
-  } catch (e) {
-    console.error(e)
-    res.status(500).json({ error: 'Falha ao buscar histórico' })
-  }
-})
-
-// ---------------------------
-// REST: envio de mensagens
-// ---------------------------
-app.post('/api/send', async (req, res) => {
-  try {
-    const { groupIds, message, replyTo } = req.body
-    if (!sock || !ready) return res.status(503).json({ error: 'WhatsApp não conectado' })
-    if (!groupIds?.length) return res.status(400).json({ error: 'Nenhum grupo selecionado' })
-    if (!message) return res.status(400).json({ error: 'Mensagem vazia' })
-
-    for (const gid of groupIds) {
-      let options = {}
-
-      if (replyTo?.groupId && replyTo?.text) {
-        const msgs = store.messages[replyTo.groupId] || []
-        const original = msgs.find(
-          m =>
-            m.message?.conversation === replyTo.text ||
-            m.message?.extendedTextMessage?.text === replyTo.text
-        )
-        if (original) {
-          options.quoted = original
-        }
-      }
-
-      await sock.sendMessage(gid, { text: message }, options)
-      io.emit('message_sent', { groupId: gid, text: message, timestamp: Date.now() })
-    }
-
-    res.json({ ok: true })
-  } catch (e) {
-    console.error('Erro no envio:', e)
-    res.status(500).json({ error: 'Falha ao enviar mensagem' })
-  }
-})
-
-// ---------------------------
-// REST: logout
+// REST: Logout (NOVO!)
 // ---------------------------
 app.post('/api/logout', async (req, res) => {
   try {
-    if (!sock) return res.status(400).json({ error: 'Não conectado' })
+    console.log('🚪 Realizando logout...')
     
-    await sock.logout()
-    ready = false
-    store.messages = {}
-    store.lastSync = {}
-    
-    // Remove sessão
-    const authPath = path.join(process.cwd(), 'auth')
-    if (fs.existsSync(authPath)) {
-      fs.rmSync(authPath, { recursive: true, force: true })
+    if (sock && ready) {
+      await sock.logout()
+      console.log('✅ Logout realizado')
     }
     
-    io.emit('logged_out')
-    console.log('🚪 Logout realizado')
+    clearAuthState()
+    ready = false
+    sock = null
     
-    // Reinicia para gerar novo QR
-    setTimeout(startWA, 2000)
+    // Limpa o cache de mensagens
+    store.messages = {}
+    store.sentMessages = {}
+    store.messagePatterns = {}
     
-    res.json({ ok: true })
-  } catch (e) {
-    console.error('Erro no logout:', e)
-    res.status(500).json({ error: 'Falha ao fazer logout' })
+    io.emit('disconnected')
+    
+    // Aguarda um pouco antes de tentar nova conexão
+    setTimeout(() => startWA(true), 2000)
+    
+    res.json({ success: true, message: 'Logout realizado com sucesso' })
+  } catch (error) {
+    console.error('Erro ao fazer logout:', error)
+    res.status(500).json({ error: 'Falha ao fazer logout', details: error.message })
   }
 })
 
 // ---------------------------
-// Socket.IO
+// REST: Reset sessão
 // ---------------------------
-io.on('connection', socket => {
+app.post('/api/reset-session', async (req, res) => {
+  try {
+    console.log('🔄 Resetando sessão...')
+    
+    if (sock) {
+      await sock.logout().catch(() => {})
+      sock.end()
+    }
+    
+    clearAuthState()
+    ready = false
+    
+    setTimeout(() => startWA(true), 1000)
+    
+    res.json({ success: true, message: 'Sessão resetada' })
+  } catch (error) {
+    console.error('Erro ao resetar:', error)
+    res.status(500).json({ error: 'Falha ao resetar' })
+  }
+})
+
+// ---------------------------
+// REST: Health & Debug
+// ---------------------------
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: ready ? 'connected' : 'disconnected',
+    uptime: process.uptime(),
+    timestamp: Date.now(),
+    cacheSize: {
+      groups: Object.keys(store.messages).length,
+      patterns: Object.keys(store.messagePatterns).length
+    }
+  })
+})
+
+// CORRIGIDO: Retorna TODAS as mensagens do grupo, não apenas 10
+app.get('/api/debug/cache/:groupId', async (req, res) => {
+  const { groupId } = req.params
+  const messages = store.messages[groupId] || []
+  
+  res.json({
+    groupId,
+    totalMessages: messages.length,
+    // Retorna todas as mensagens formatadas
+    messages: messages.map(m => ({
+      id: m.key?.id,
+      text: m.message?.conversation || m.message?.extendedTextMessage?.text,
+      from: m.pushName,
+      fromMe: m.key?.fromMe,
+      timestamp: new Date(m.messageTimestamp * 1000).toISOString()
+    }))
+  })
+})
+
+// ---------------------------
+// Socket.IO (SEM TIMEOUT DE INATIVIDADE)
+// ---------------------------
+io.on('connection', (socket) => {
+  console.log('🔌 Cliente conectado:', socket.id)
+  
   socket.emit('status', { ready })
   
-  socket.on('request_history', async ({ groupId }) => {
-    const messages = await syncGroupHistory(groupId, 50)
-    socket.emit('history', {
-      groupId,
-      messages: messages.map(msg => ({
-        from: msg.pushName || msg.key.participant?.split('@')[0] || 'Desconhecido',
-        text: msg.message?.conversation || msg.message?.extendedTextMessage?.text || '(mídia)',
-        timestamp: (msg.messageTimestamp || Date.now() / 1000) * 1000
-      }))
-    })
+  if (ready) {
+    socket.emit('ready')
+  }
+  
+  socket.on('disconnect', () => {
+    console.log('🔌 Cliente desconectado:', socket.id)
+  })
+  
+  socket.on('request-status', () => {
+    socket.emit('status', { ready })
+  })
+})
+
+// ---------------------------
+// Tratamento de erros
+// ---------------------------
+process.on('uncaughtException', (err) => {
+  console.error('❌ Erro não capturado:', err)
+})
+
+process.on('unhandledRejection', (err) => {
+  console.error('❌ Promise rejeitada:', err)
+})
+
+process.on('SIGINT', async () => {
+  console.log('🛑 Encerrando...')
+  
+  if (sock) {
+    await sock.end()
+  }
+  
+  server.close(() => {
+    console.log('👋 Servidor encerrado')
+    process.exit(0)
   })
 })
 
@@ -319,7 +641,13 @@ io.on('connection', socket => {
 // Inicialização
 // ---------------------------
 const PORT = process.env.PORT || 3000
+
 server.listen(PORT, async () => {
-  console.log(`🚀 Servidor iniciado na porta ${PORT}`)
-  await startWA()
+  console.log(`🚀 Servidor na porta ${PORT}`)
+  console.log(`📊 Health: http://localhost:${PORT}/api/health`)
+  console.log('⏳ Iniciando WhatsApp...')
+  
+  setTimeout(() => {
+    startWA()
+  }, 2000)
 })
