@@ -48,6 +48,16 @@
         box-shadow: 0 10px 25px rgba(102, 126, 234, 0.4);
       }
 
+      .btn-danger {
+        background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+        transition: all 0.3s ease;
+      }
+
+      .btn-danger:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 25px rgba(239, 68, 68, 0.4);
+      }
+
       .group-item {
         transition: all 0.2s ease;
       }
@@ -209,51 +219,88 @@
               </svg>
             </div>
             <div>
-              <h1 class="text-2xl md:text-3xl font-bold gradient-text">WhatsApp Broadcaster</h1>
-              <p class="text-sm text-gray-600">Professional Multi-Group Messaging</p>
+              <h1 class="text-2xl font-bold gradient-text">WhatsApp Broadcaster</h1>
+              <p class="text-sm text-gray-600">Sistema profissional de broadcasting</p>
             </div>
           </div>
-          <div class="flex items-center gap-4">
-            <div id="connection-status" class="flex items-center gap-2 px-4 py-2 rounded-full glass-dark">
-              <div class="w-2 h-2 rounded-full bg-red-500 pulse-dot" id="status-dot"></div>
-              <span class="text-sm font-medium text-gray-700" id="status-text">Desconectado</span>
+          
+          <div class="flex items-center gap-3">
+            <!-- Status Badge -->
+            <div id="connection-status" class="glass-dark px-4 py-2 rounded-lg flex items-center gap-2">
+              <div id="status-dot" class="w-2 h-2 rounded-full bg-gray-400 pulse-dot"></div>
+              <span id="status-text" class="text-sm font-medium text-gray-700">Conectando...</span>
             </div>
-            <div class="text-sm text-gray-600">
-              Powered by <span class="font-bold gradient-text">Nelson Leandro</span>
-            </div>
+
+            <!-- Botão Logout (NOVO!) -->
+            <button 
+              id="logout-btn" 
+              class="btn-danger px-4 py-2 rounded-lg text-white font-semibold text-sm shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 hover:scale-105 transition-transform"
+              title="Desconectar e fazer logout"
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+              </svg>
+              <span>Logout</span>
+            </button>
           </div>
         </div>
       </header>
 
-      <!-- Main Grid -->
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
-        <!-- QR Code Panel -->
-        <div id="qr-card" class="glass-morphism rounded-2xl p-6 shadow-xl transition-all duration-300">
-          <div class="flex items-center gap-3 mb-4">
-            <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center">
-              <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z"/>
+      <!-- QR Code Card -->
+      <div id="qr-card" class="glass-morphism rounded-2xl p-6 mb-6 shadow-xl">
+        <div class="flex flex-col md:flex-row items-center gap-6">
+          <div class="flex-1">
+            <div class="flex items-center gap-3 mb-3">
+              <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center">
+                <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z"/>
+                </svg>
+              </div>
+              <div>
+                <h2 class="text-lg font-semibold text-gray-800">Conectar WhatsApp</h2>
+                <p class="text-xs text-gray-500">Escaneie o QR Code com seu celular</p>
+              </div>
+            </div>
+            <div class="space-y-2 text-sm text-gray-600">
+              <div class="flex items-start gap-2">
+                <span class="text-purple-600 font-bold">1.</span>
+                <span>Abra o WhatsApp no seu celular</span>
+              </div>
+              <div class="flex items-start gap-2">
+                <span class="text-purple-600 font-bold">2.</span>
+                <span>Vá em <strong>Menu</strong> ou <strong>Configurações</strong></span>
+              </div>
+              <div class="flex items-start gap-2">
+                <span class="text-purple-600 font-bold">3.</span>
+                <span>Toque em <strong>Aparelhos conectados</strong></span>
+              </div>
+              <div class="flex items-start gap-2">
+                <span class="text-purple-600 font-bold">4.</span>
+                <span>Escaneie este QR Code</span>
+              </div>
+            </div>
+            <button 
+              id="reset-session-btn" 
+              onclick="resetSession()" 
+              class="mt-4 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium text-gray-700 transition flex items-center gap-2"
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
               </svg>
-            </div>
-            <div>
-              <h2 class="text-lg font-semibold text-gray-800">Autenticação</h2>
-              <p class="text-xs text-gray-500">Escaneie para conectar</p>
-            </div>
+              Gerar Novo QR Code
+            </button>
           </div>
           
-          <div id="qr" class="bg-white rounded-xl p-4 aspect-square flex items-center justify-center shadow-inner">
-            <div class="loading-skeleton w-full h-full rounded-lg"></div>
+          <div class="w-full md:w-80">
+            <div id="qr" class="bg-white rounded-xl shadow-inner p-4 aspect-square flex items-center justify-center">
+              <div class="loading-skeleton w-full h-full rounded-lg"></div>
+            </div>
           </div>
-          
-          <button id="reset-session-btn" class="mt-4 w-full px-4 py-3 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-xl font-medium hover:shadow-lg transition-all duration-300 hover:-translate-y-1">
-            <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-            </svg>
-            Gerar Novo QR Code
-          </button>
         </div>
+      </div>
 
+      <!-- Main Content -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <!-- Groups Selection -->
         <div class="glass-morphism rounded-2xl p-6 shadow-xl">
           <div class="flex items-center justify-between mb-4">
@@ -265,20 +312,30 @@
               </div>
               <div>
                 <h2 class="text-lg font-semibold text-gray-800">Grupos</h2>
-                <p class="text-xs text-gray-500" id="groups-count">0 grupos disponíveis</p>
+                <p class="text-xs text-gray-500" id="groups-count">0 disponíveis</p>
               </div>
             </div>
-            <div class="flex items-center gap-2">
-              <button onclick="selectAllGroups()" class="text-xs px-3 py-1 rounded-lg bg-purple-100 text-purple-700 hover:bg-purple-200 transition">
+            
+            <!-- Group Actions -->
+            <div class="flex gap-1">
+              <button 
+                onclick="selectAllGroups()" 
+                class="p-2 hover:bg-gray-100 rounded-lg transition text-xs font-medium text-gray-600"
+                title="Selecionar todos"
+              >
                 Todos
               </button>
-              <button onclick="deselectAllGroups()" class="text-xs px-3 py-1 rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 transition">
-                Limpar
+              <button 
+                onclick="deselectAllGroups()" 
+                class="p-2 hover:bg-gray-100 rounded-lg transition text-xs font-medium text-gray-600"
+                title="Desmarcar todos"
+              >
+                Nenhum
               </button>
             </div>
           </div>
 
-          <!-- Search Bar -->
+          <!-- Search -->
           <div class="relative mb-4">
             <input 
               type="text" 
@@ -308,7 +365,7 @@
         </div>
 
         <!-- Message Composer -->
-        <div class="glass-morphism rounded-2xl p-6 shadow-xl">
+        <div class="glass-morphism rounded-2xl p-6 shadow-xl lg:col-span-2">
           <div class="flex items-center gap-3 mb-4">
             <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center">
               <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -410,10 +467,20 @@
             </div>
             <div>
               <h2 class="text-lg font-semibold text-gray-800">Monitoramento em Tempo Real</h2>
-              <p class="text-xs text-gray-500">Últimas 5 horas de conversas dos grupos selecionados</p>
+              <p class="text-xs text-gray-500">Últimas conversas dos grupos selecionados</p>
             </div>
           </div>
           <div class="flex items-center gap-2">
+            <!-- Botão Expandir (NOVO!) -->
+            <button 
+              onclick="expandMonitoring()" 
+              class="p-2 hover:bg-gray-100 rounded-lg transition" 
+              title="Abrir em nova aba"
+            >
+              <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
+              </svg>
+            </button>
             <button onclick="refreshChats()" class="p-2 hover:bg-gray-100 rounded-lg transition" title="Atualizar">
               <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
@@ -486,6 +553,26 @@
         if (window.cancelReplyFunction) {
           window.cancelReplyFunction();
         }
+      }
+
+      function resetSession() {
+        if (window.resetSessionFunction) {
+          window.resetSessionFunction();
+        }
+      }
+
+      // NOVO: Função para expandir monitoramento em nova aba
+      function expandMonitoring() {
+        const width = 1200;
+        const height = 800;
+        const left = (screen.width - width) / 2;
+        const top = (screen.height - height) / 2;
+        
+        window.open(
+          'monitoring.html',
+          'MonitoringWindow',
+          `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`
+        );
       }
     </script>
     <script src="./app.js"></script>
