@@ -25,7 +25,8 @@ document.addEventListener('DOMContentLoaded', () => {
     groupSearch: document.getElementById('group-search'),
     replyBox: document.getElementById('reply-indicator-box'),
     replyPreview: document.getElementById('reply-preview'),
-    resetBtn: document.getElementById('reset-session-btn')
+    resetBtn: document.getElementById('reset-session-btn'),
+    logoutBtn: document.getElementById('logout-btn')
   };
 
   const state = {
@@ -472,6 +473,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Reset session
     el.resetBtn.addEventListener('click', resetSession);
+
+    // Logout button (NOVO!)
+    if (el.logoutBtn) {
+      el.logoutBtn.addEventListener('click', performLogout);
+    }
   }
 
   async function sendMessage() {
@@ -540,6 +546,50 @@ document.addEventListener('DOMContentLoaded', () => {
     } finally {
       el.send.disabled = false;
       updateUI();
+    }
+  }
+
+  async function performLogout() {
+    if (!confirm('Deseja realmente fazer logout? Isso desconectará o WhatsApp e você precisará escanear o QR Code novamente.')) {
+      return;
+    }
+    
+    el.logoutBtn.disabled = true;
+    el.logoutBtn.innerHTML = '<span class="animate-pulse">Desconectando...</span>';
+    
+    try {
+      const response = await fetch(`${window.BACKEND_URL}/api/logout`, {
+        method: 'POST'
+      });
+      
+      if (response.ok) {
+        // Limpa estado local
+        state.groups = [];
+        state.filteredGroups = [];
+        state.selected.clear();
+        state.chatByGroup.clear();
+        state.messageIdMap.clear();
+        
+        // Reseta UI
+        setStatus('Desconectado', false);
+        el.qrCard.classList.remove('hidden');
+        el.groups.innerHTML = '';
+        el.chats.innerHTML = '';
+        
+        showToast('Logout realizado com sucesso! Aguarde novo QR Code...', 'success');
+      } else {
+        throw new Error('Falha ao fazer logout');
+      }
+    } catch (error) {
+      showToast(`Erro ao fazer logout: ${error.message}`, 'error');
+    } finally {
+      el.logoutBtn.disabled = false;
+      el.logoutBtn.innerHTML = `
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+        </svg>
+        <span>Logout</span>
+      `;
     }
   }
 
@@ -699,6 +749,8 @@ document.addEventListener('DOMContentLoaded', () => {
     renderChats();
     showToast('Chats limpos', 'success');
   };
+
+  window.resetSessionFunction = resetSession;
 
   // --- Utilities ---
   function escapeHtml(text) {
