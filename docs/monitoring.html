@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="pt-br">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Monitoramento - WhatsApp Broadcaster</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+      * {
+        font-family: 'Inter', sans-serif;
+      }
+
+      body {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        margin: 0;
+        padding: 0;
+      }
+
+      .glass-morphism {
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+      }
+
+      .glass-dark {
+        background: rgba(0, 0, 0, 0.05);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(0, 0, 0, 0.1);
+      }
+
+      .scrollbar-thin::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+      }
+
+      .scrollbar-thin::-webkit-scrollbar-thumb {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 10px;
+      }
+
+      .scrollbar-thin::-webkit-scrollbar-track {
+        background: rgba(0, 0, 0, 0.05);
+        border-radius: 10px;
+      }
+
+      .chat-container {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+        gap: 1.5rem;
+      }
+
+      @media (max-width: 768px) {
+        .chat-container {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      .message-bubble {
+        animation: slideIn 0.3s ease;
+      }
+
+      @keyframes slideIn {
+        from {
+          opacity: 0;
+          transform: translateY(10px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      .pulse-dot {
+        animation: pulse 2s infinite;
+      }
+
+      @keyframes pulse {
+        0%, 100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.5;
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="min-h-screen p-6">
+      <!-- Header -->
+      <header class="glass-morphism rounded-2xl p-6 mb-6 shadow-xl">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-4">
+            <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shadow-lg">
+              <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+              </svg>
+            </div>
+            <div>
+              <h1 class="text-2xl font-bold text-gray-800">Monitoramento em Tempo Real</h1>
+              <p class="text-sm text-gray-600">Visualização expandida - Últimas conversas</p>
+            </div>
+          </div>
+          
+          <div class="flex items-center gap-3">
+            <!-- Status Badge -->
+            <div id="connection-status" class="glass-dark px-4 py-2 rounded-lg flex items-center gap-2">
+              <div id="status-dot" class="w-2 h-2 rounded-full bg-gray-400 pulse-dot"></div>
+              <span id="status-text" class="text-sm font-medium text-gray-700">Conectando...</span>
+            </div>
+            
+            <!-- Actions -->
+            <button onclick="refreshChats()" class="p-2 hover:bg-gray-100 rounded-lg transition" title="Atualizar">
+              <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+              </svg>
+            </button>
+            
+            <button onclick="clearChats()" class="p-2 hover:bg-gray-100 rounded-lg transition" title="Limpar">
+              <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+              </svg>
+            </button>
+
+            <button onclick="window.close()" class="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg transition text-sm font-medium" title="Fechar janela">
+              Fechar
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <!-- Chats Container -->
+      <div class="glass-morphism rounded-2xl p-6 shadow-xl">
+        <div id="chats" class="chat-container">
+          <div class="glass-dark rounded-xl p-6 flex flex-col items-center justify-center min-h-[400px]">
+            <svg class="w-16 h-16 text-gray-400 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+            </svg>
+            <p class="text-gray-500 text-center">
+              Aguardando mensagens dos grupos selecionados...<br>
+              <span class="text-xs">As mensagens aparecerão aqui em tempo real</span>
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toast-container" class="fixed top-4 right-4 z-50"></div>
+
+    <script>
+      window.BACKEND_URL = 'https://whatsapp-group-broadcaster.onrender.com';
+
+      const socket = io(window.BACKEND_URL, {
+        transports: ['websocket', 'polling'],
+        reconnection: true,
+        reconnectionAttempts: 5,
+        reconnectionDelay: 1000
+      });
+
+      const state = {
+        groups: [],
+        chatByGroup: new Map(),
+        selectedGroups: new Set()
+      };
+
+      const el = {
+        chats: document.getElementById('chats'),
+        status: document.getElementById('status-text'),
+        statusDot: document.getElementById('status-dot')
+      };
+
+      // --- Socket Events ---
+      socket.on('connect', () => {
+        console.log('✅ Conectado ao servidor');
+        setStatus('Conectado', true);
+      });
+
+      socket.on('disconnect', () => {
+        console.log('❌ Desconectado');
+        setStatus('Desconectado', false);
+      });
+
+      socket.on('ready', () => {
+        setStatus('WhatsApp Conectado', true);
+        fetchGroups();
+      });
+
+      socket.on('status', ({ ready }) => {
+        if (ready) {
+          setStatus('WhatsApp Conectado', true);
+          fetchGroups();
+        } else {
+          setStatus('Aguardando conexão', false);
+        }
+      });
+
+      socket.on('message', ({ groupId, from, text, timestamp }) => {
+        if (state.selectedGroups.has(groupId) || state.selectedGroups.size === 0) {
+          pushChat(groupId, from, text, timestamp);
+        }
+      });
+
+      socket.on('message_sent', ({ groupId, text, timestamp }) => {
+        if (state.selectedGroups.has(groupId) || state.selectedGroups.size === 0) {
+          pushChat(groupId, 'Você', text, timestamp);
+        }
+      });
+
+      // --- Functions ---
+      function setStatus(text, connected) {
+        el.status.textContent = text;
+        el.statusDot.className = connected 
+          ? 'w-2 h-2 rounded-full bg-green-500 pulse-dot' 
+          : 'w-2 h-2 rounded-full bg-red-500 pulse-dot';
+      }
+
+      async function fetchGroups() {
+        try {
+          const response = await fetch(`${window.BACKEND_URL}/api/groups`);
+          if (response.ok) {
+            state.groups = await response.json();
+            console.log(`✅ ${state.groups.length} grupos carregados`);
+          }
+        } catch (error) {
+          console.error('Erro ao buscar grupos:', error);
+        }
+      }
+
+      function pushChat(groupId, who, text, ts) {
+        if (!state.chatByGroup.has(groupId)) {
+          state.chatByGroup.set(groupId, []);
+        }
+        
+        const chat = state.chatByGroup.get(groupId);
+        chat.push({ who, text, ts: ts || Date.now() });
+        
+        // Ordena por timestamp
+        chat.sort((a, b) => a.ts - b.ts);
+        
+        // Limita a 150 mensagens
+        if (chat.length > 150) {
+          state.chatByGroup.set(groupId, chat.slice(-150));
+        }
+        
+        renderChats();
+      }
+
+      function renderChats() {
+        el.chats.innerHTML = '';
+        
+        if (state.chatByGroup.size === 0) {
+          el.chats.innerHTML = `
+            <div class="glass-dark rounded-xl p-6 flex flex-col items-center justify-center min-h-[400px]">
+              <svg class="w-16 h-16 text-gray-400 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+              </svg>
+              <p class="text-gray-500 text-center">
+                Aguardando mensagens...<br>
+                <span class="text-xs">As mensagens dos grupos selecionados aparecerão aqui</span>
+              </p>
+            </div>
+          `;
+          return;
+        }
+        
+        Array.from(state.chatByGroup.entries()).forEach(([groupId, messages]) => {
+          const group = state.groups.find(g => g.id === groupId);
+          
+          const chatCard = document.createElement('div');
+          chatCard.className = 'glass-dark rounded-xl p-4';
+          
+          const header = `
+            <div class="flex items-center justify-between mb-3 pb-2 border-b border-gray-200">
+              <div class="flex items-center gap-2">
+                <div class="w-2 h-2 bg-green-500 rounded-full pulse-dot"></div>
+                <h3 class="font-semibold text-gray-800">${escapeHtml(group?.subject || groupId)}</h3>
+              </div>
+              <span class="text-xs text-gray-500">${messages.length} mensagens</span>
+            </div>
+          `;
+          
+          let messagesHtml = '';
+          messages.slice(-50).forEach(msg => {
+            const time = new Date(msg.ts).toLocaleTimeString('pt-BR');
+            const isYou = msg.who === 'Você';
+            
+            messagesHtml += `
+              <div class="message-bubble mb-2 p-2 ${isYou ? 'bg-purple-50' : 'bg-white'} rounded-lg">
+                <div class="flex items-start justify-between gap-2">
+                  <span class="font-medium text-sm ${isYou ? 'text-purple-700' : 'text-gray-700'}">${escapeHtml(msg.who)}</span>
+                  <span class="text-xs text-gray-400">${time}</span>
+                </div>
+                <p class="text-sm text-gray-800 mt-1 break-words">${escapeHtml(msg.text)}</p>
+              </div>
+            `;
+          });
+          
+          chatCard.innerHTML = header + `
+            <div class="space-y-2 max-h-[600px] overflow-y-auto scrollbar-thin pr-2">
+              ${messagesHtml || '<p class="text-xs text-gray-400 text-center py-4">Sem mensagens ainda</p>'}
+            </div>
+          `;
+          
+          el.chats.appendChild(chatCard);
+        });
+      }
+
+      function refreshChats() {
+        showToast('Atualizando chats...', 'info');
+        socket.emit('request-status');
+      }
+
+      function clearChats() {
+        state.chatByGroup.clear();
+        renderChats();
+        showToast('Chats limpos', 'success');
+      }
+
+      function escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+      }
+
+      function showToast(message, type = 'info') {
+        const toast = document.createElement('div');
+        toast.className = `
+          px-6 py-3 rounded-xl shadow-lg mb-3 transform translate-x-0 transition-all duration-300
+          ${type === 'success' ? 'bg-gradient-to-r from-green-500 to-emerald-600 text-white' :
+            type === 'error' ? 'bg-gradient-to-r from-red-500 to-pink-600 text-white' :
+            type === 'warning' ? 'bg-gradient-to-r from-amber-500 to-orange-600 text-white' :
+            'bg-gradient-to-r from-blue-500 to-indigo-600 text-white'}
+        `;
+        
+        toast.innerHTML = `
+          <div class="flex items-center gap-3">
+            <span class="font-medium">${message}</span>
+          </div>
+        `;
+        
+        const container = document.getElementById('toast-container');
+        container.appendChild(toast);
+        
+        setTimeout(() => {
+          toast.style.transform = 'translateX(400px)';
+          toast.style.opacity = '0';
+          setTimeout(() => toast.remove(), 300);
+        }, 3000);
+      }
+
+      // Initialize
+      socket.emit('request-status');
+      fetchGroups();
+    </script>
+  </body>
+</html>
