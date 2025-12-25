@@ -181,9 +181,10 @@ class SessionManager {
 
       // Handler de conexão
       sock.ev.on('connection.update', async (update) => {
-        const { qr, connection, lastDisconnect } = update
+        const { qr, connection, lastDisconnect, isNewLogin } = update
 
-        if (qr) {
+        // Só mostra QR se realmente precisar (não está conectado)
+        if (qr && !session.ready) {
           session.qrRetries++
           console.log(`📱 QR Code para ${sessionId} (${session.qrRetries}/5)`)
 
@@ -201,26 +202,40 @@ class SessionManager {
         }
 
         if (connection === 'open') {
-          session.ready = true
-          session.qrRetries = 0
-          this.io.to(sessionId).emit('ready')
-          console.log(`✅ Sessão ${sessionId} conectada!`)
+          // Só emite se não estava pronto antes
+          if (!session.ready) {
+            session.ready = true
+            session.qrRetries = 0
+            this.io.to(sessionId).emit('ready')
+            console.log(`✅ Sessão ${sessionId} conectada!`)
+          }
         } else if (connection === 'close') {
-          session.ready = false
-          this.io.to(sessionId).emit('disconnected')
-
           const statusCode = lastDisconnect?.error?.output?.statusCode
           const shouldReconnect = statusCode !== DisconnectReason.loggedOut
+
+          // Só emite disconnected se realmente desconectou (não temporário)
+          if (session.ready) {
+            session.ready = false
+
+            // Só notifica o frontend se for logout ou erro grave
+            if (!shouldReconnect || statusCode === 401 || statusCode === 403 || statusCode === 405) {
+              this.io.to(sessionId).emit('disconnected')
+              console.log(`❌ Sessão ${sessionId} desconectada (código: ${statusCode})`)
+            } else {
+              console.log(`🔄 Reconexão temporária para ${sessionId} (código: ${statusCode})`)
+            }
+          }
 
           if (statusCode === 405 || statusCode === DisconnectReason.badSession) {
             await this.clearSessionAuth(sessionId)
           }
 
           if (shouldReconnect) {
-            console.log(`🔄 Reconectando ${sessionId} em 10s...`)
-            setTimeout(() => this.startSession(sessionId, statusCode === 405), 10000)
+            console.log(`🔄 Reconectando ${sessionId} em 5s...`)
+            setTimeout(() => this.startSession(sessionId, statusCode === 405), 5000)
           } else {
             console.log(`🚪 Logout realizado para ${sessionId}`)
+            this.io.to(sessionId).emit('disconnected')
           }
         }
       })
