@@ -130,7 +130,15 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    state.filteredGroups.forEach(g => {
+    // Ordena: selecionados primeiro, depois por nome
+    const sortedGroups = [...state.filteredGroups].sort((a, b) => {
+      const aSelected = state.selected.has(a.id) ? 0 : 1;
+      const bSelected = state.selected.has(b.id) ? 0 : 1;
+      if (aSelected !== bSelected) return aSelected - bSelected;
+      return a.subject.localeCompare(b.subject);
+    });
+
+    sortedGroups.forEach(g => {
       const div = document.createElement('div');
       const isSelected = state.selected.has(g.id);
       const messageCount = state.chatByGroup.get(g.id)?.length || 0;
@@ -197,6 +205,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
     updateUI();
+    renderGroups(); // Re-renderiza para ordenar selecionados no topo
   }
 
   async function loadGroupPicture(groupId) {
@@ -807,6 +816,10 @@ document.addEventListener('DOMContentLoaded', () => {
   window.resetSessionFunction = resetSession;
 
   window.getSessionId = () => SESSION_ID;
+
+  window.getSelectedGroups = () => Array.from(state.selected);
+
+  window.getGroupsData = () => state.groups;
 
   // --- Utilities ---
   function escapeHtml(text) {

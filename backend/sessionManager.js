@@ -255,11 +255,35 @@ class SessionManager {
               session.store.messages[from] = []
             }
 
+            // Resolve nome do remetente
+            const participant = msg.key.participant || msg.participant
+            let senderName = msg.pushName || msg.verifiedBizName
+
+            // Se não tem pushName, tenta do mapa de contatos
+            if (!senderName && participant && session.store.contacts) {
+              senderName = session.store.contacts[participant]
+            }
+
+            // Se ainda não tem, formata o número
+            if (!senderName && participant) {
+              const number = participant.split('@')[0]
+              // Formata número brasileiro
+              if (number.length >= 12 && number.startsWith('55')) {
+                senderName = number.replace(/^55(\d{2})(\d{5})(\d{4})$/, '($1) $2-$3')
+                  .replace(/^55(\d{2})(\d{4})(\d{4})$/, '($1) $2-$3')
+              }
+              if (!senderName || senderName === number) {
+                senderName = number
+              }
+            }
+
+            if (!senderName) senderName = 'Desconhecido'
+
             const msgData = {
               key: msg.key,
               message: msg.message,
               messageTimestamp: msg.messageTimestamp,
-              pushName: msg.pushName || msg.key.participant?.split('@')[0] || 'Usuário'
+              pushName: senderName
             }
 
             session.store.messages[from].push(msgData)
