@@ -10,134 +10,145 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
-      * {
-        font-family: 'Inter', sans-serif;
-      }
-
+      * { font-family: 'Inter', sans-serif; }
       body {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         min-height: 100vh;
         margin: 0;
         padding: 0;
       }
-
       .glass-morphism {
         background: rgba(255, 255, 255, 0.95);
         backdrop-filter: blur(10px);
         border: 1px solid rgba(255, 255, 255, 0.3);
       }
-
       .glass-dark {
         background: rgba(0, 0, 0, 0.05);
         backdrop-filter: blur(10px);
         border: 1px solid rgba(0, 0, 0, 0.1);
       }
-
-      .scrollbar-thin::-webkit-scrollbar {
-        width: 6px;
-        height: 6px;
-      }
-
+      .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
       .scrollbar-thin::-webkit-scrollbar-thumb {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         border-radius: 10px;
       }
-
       .scrollbar-thin::-webkit-scrollbar-track {
         background: rgba(0, 0, 0, 0.05);
         border-radius: 10px;
       }
-
       .chat-container {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
         gap: 1.5rem;
       }
-
       @media (max-width: 768px) {
-        .chat-container {
-          grid-template-columns: 1fr;
-        }
+        .chat-container { grid-template-columns: 1fr; }
       }
-
-      .message-bubble {
-        animation: slideIn 0.3s ease;
+      .message-bubble { animation: slideIn 0.3s ease; cursor: pointer; transition: all 0.2s; }
+      .message-bubble:hover { transform: scale(1.01); }
+      .message-bubble.selected {
+        ring: 2px;
+        ring-color: #8b5cf6;
+        box-shadow: 0 0 0 2px #8b5cf6;
+        background: #f3e8ff !important;
       }
-
       @keyframes slideIn {
-        from {
-          opacity: 0;
-          transform: translateY(10px);
-        }
-        to {
-          opacity: 1;
-          transform: translateY(0);
-        }
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
       }
-
-      .pulse-dot {
-        animation: pulse 2s infinite;
-      }
-
+      .pulse-dot { animation: pulse 2s infinite; }
       @keyframes pulse {
-        0%, 100% {
-          opacity: 1;
-        }
-        50% {
-          opacity: 0.5;
-        }
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
       }
+      .reply-box {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        transform: translateY(100%);
+        transition: transform 0.3s ease;
+        z-index: 100;
+      }
+      .reply-box.visible { transform: translateY(0); }
+      .highlight-match { background: yellow; padding: 0 2px; border-radius: 2px; }
     </style>
   </head>
 
   <body>
-    <div class="min-h-screen p-6">
+    <div class="min-h-screen p-6 pb-32">
       <!-- Header -->
-      <header class="glass-morphism rounded-2xl p-6 mb-6 shadow-xl">
-        <div class="flex items-center justify-between">
+      <header class="glass-morphism rounded-2xl p-4 mb-6 shadow-xl">
+        <div class="flex items-center justify-between flex-wrap gap-4">
           <div class="flex items-center gap-4">
-            <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shadow-lg">
-              <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shadow-lg">
+              <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
               </svg>
             </div>
             <div>
-              <h1 class="text-2xl font-bold text-gray-800">Monitoramento em Tempo Real</h1>
-              <p class="text-sm text-gray-600">Visualização expandida - Últimas conversas</p>
+              <h1 class="text-xl font-bold text-gray-800">Monitoramento em Tempo Real</h1>
+              <p class="text-xs text-gray-600">Clique nas mensagens para selecionar e responder</p>
             </div>
           </div>
 
-          <div class="flex items-center gap-3">
-            <!-- Session ID -->
+          <!-- Search Bar -->
+          <div class="flex-1 max-w-md mx-4">
+            <div class="relative">
+              <input type="text" id="search-input" placeholder="Pesquisar mensagens ou grupos..."
+                class="w-full px-4 py-2 pl-10 rounded-xl border border-gray-200 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 outline-none transition">
+              <svg class="w-5 h-5 text-gray-400 absolute left-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+              </svg>
+              <button id="clear-search" class="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600 hidden">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-2">
             <div class="glass-dark px-3 py-2 rounded-lg">
               <span id="session-display" class="text-xs font-mono text-gray-600"></span>
             </div>
-
-            <!-- Status Badge -->
-            <div id="connection-status" class="glass-dark px-4 py-2 rounded-lg flex items-center gap-2">
+            <div id="connection-status" class="glass-dark px-3 py-2 rounded-lg flex items-center gap-2">
               <div id="status-dot" class="w-2 h-2 rounded-full bg-gray-400 pulse-dot"></div>
               <span id="status-text" class="text-sm font-medium text-gray-700">Conectando...</span>
             </div>
-
-            <!-- Actions -->
             <button onclick="refreshChats()" class="p-2 hover:bg-gray-100 rounded-lg transition" title="Atualizar">
               <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
               </svg>
             </button>
-
             <button onclick="clearChats()" class="p-2 hover:bg-gray-100 rounded-lg transition" title="Limpar">
               <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
               </svg>
             </button>
-
-            <button onclick="window.close()" class="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg transition text-sm font-medium" title="Fechar janela">
-              Fechar
-            </button>
           </div>
         </div>
       </header>
+
+      <!-- Selection Info Bar -->
+      <div id="selection-bar" class="glass-morphism rounded-xl p-3 mb-4 shadow-lg hidden">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <span class="text-purple-600 font-semibold">
+              <span id="selection-count">0</span> mensagem(ns) selecionada(s)
+            </span>
+            <span class="text-gray-500 text-sm">em <span id="selection-groups-count">0</span> grupo(s)</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <button onclick="selectSameUser()" class="px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm font-medium transition">
+              Selecionar mesmo usuário
+            </button>
+            <button onclick="clearSelection()" class="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg text-sm font-medium transition">
+              Limpar seleção
+            </button>
+          </div>
+        </div>
+      </div>
 
       <!-- Chats Container -->
       <div class="glass-morphism rounded-2xl p-6 shadow-xl">
@@ -155,75 +166,82 @@
       </div>
     </div>
 
+    <!-- Reply Box (Fixed at bottom) -->
+    <div id="reply-box" class="reply-box glass-morphism shadow-2xl border-t border-gray-200">
+      <div class="max-w-4xl mx-auto p-4">
+        <div id="reply-preview" class="mb-3 p-3 bg-purple-50 rounded-lg border-l-4 border-purple-500">
+          <div class="flex items-center justify-between mb-1">
+            <span class="text-sm font-semibold text-purple-700">Respondendo a <span id="reply-user">usuário</span></span>
+            <button onclick="cancelReply()" class="text-gray-400 hover:text-gray-600">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+            </button>
+          </div>
+          <p id="reply-text" class="text-sm text-gray-600 truncate"></p>
+          <p id="reply-groups" class="text-xs text-purple-500 mt-1"></p>
+        </div>
+        <div class="flex gap-3">
+          <textarea id="reply-message" rows="2" placeholder="Digite sua resposta..."
+            class="flex-1 px-4 py-3 rounded-xl border border-gray-200 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 outline-none resize-none"></textarea>
+          <button onclick="sendReply()" class="px-6 py-3 bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700 text-white rounded-xl font-semibold transition shadow-lg">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Toast Container -->
     <div id="toast-container" class="fixed top-4 right-4 z-50"></div>
 
     <script>
-      // URL do backend - Railway
+      // URL do backend
       window.BACKEND_URL = window.location.hostname === 'localhost'
         ? 'http://localhost:3000'
         : 'https://web-production-180d.up.railway.app';
 
-      // Pega sessionId da janela pai ou localStorage
       function getSessionId() {
-        // Tenta da URL
         const urlParams = new URLSearchParams(window.location.search);
         let sessionId = urlParams.get('session');
-
         if (sessionId) return sessionId;
-
-        // Tenta da janela pai (opener)
         if (window.opener && window.opener.getSessionId) {
           sessionId = window.opener.getSessionId();
           if (sessionId) return sessionId;
         }
-
-        // Tenta do localStorage
         sessionId = localStorage.getItem('whatsapp_session_id');
-
         return sessionId || 'monitoring_' + Date.now();
       }
 
-      const SESSION_ID = getSessionId();
-      console.log('📱 Session ID:', SESSION_ID);
-
-      // Pega grupos selecionados da janela pai
       function getSelectedGroupsFromOpener() {
         try {
           if (window.opener && window.opener.getSelectedGroups) {
-            const selected = window.opener.getSelectedGroups();
-            console.log('📋 Grupos selecionados da janela principal:', selected);
-            return selected || [];
+            return window.opener.getSelectedGroups() || [];
           }
-        } catch (e) {
-          console.log('⚠️ Não foi possível acessar janela principal:', e);
-        }
+        } catch (e) { console.log('Erro ao acessar grupos:', e); }
         return [];
       }
 
-      // Pega dados dos grupos da janela pai
       function getGroupsDataFromOpener() {
         try {
           if (window.opener && window.opener.getGroupsData) {
             return window.opener.getGroupsData() || [];
           }
-        } catch (e) {
-          console.log('⚠️ Não foi possível acessar dados dos grupos:', e);
-        }
+        } catch (e) { console.log('Erro ao acessar dados:', e); }
         return [];
       }
 
+      const SESSION_ID = getSessionId();
       const SELECTED_GROUPS = getSelectedGroupsFromOpener();
       const OPENER_GROUPS_DATA = getGroupsDataFromOpener();
 
-      // Mostra sessionId e info
+      console.log('Session:', SESSION_ID, 'Groups:', SELECTED_GROUPS.length);
+
       const sessionDisplay = document.getElementById('session-display');
-      if (SELECTED_GROUPS.length > 0) {
-        sessionDisplay.textContent = `${SELECTED_GROUPS.length} grupos`;
-        sessionDisplay.title = `Monitorando ${SELECTED_GROUPS.length} grupos selecionados`;
-      } else {
-        sessionDisplay.textContent = SESSION_ID.substring(0, 15) + '...';
-      }
+      sessionDisplay.textContent = SELECTED_GROUPS.length > 0
+        ? `${SELECTED_GROUPS.length} grupos`
+        : SESSION_ID.substring(0, 12) + '...';
 
       const socket = io(window.BACKEND_URL, {
         query: { sessionId: SESSION_ID },
@@ -233,7 +251,6 @@
         reconnectionDelay: 1000
       });
 
-      // Helper para URLs com sessionId
       function apiUrl(endpoint) {
         const separator = endpoint.includes('?') ? '&' : '?';
         return `${window.BACKEND_URL}${endpoint}${separator}sessionId=${SESSION_ID}`;
@@ -242,27 +259,51 @@
       const state = {
         groups: OPENER_GROUPS_DATA,
         chatByGroup: new Map(),
-        selectedGroups: new Set(SELECTED_GROUPS)
+        selectedGroups: new Set(SELECTED_GROUPS),
+        selectedMessages: new Map(), // messageId -> {groupId, who, text, ts}
+        searchQuery: '',
+        currentUser: null // Para selecionar mensagens do mesmo usuário
       };
 
       const el = {
         chats: document.getElementById('chats'),
         status: document.getElementById('status-text'),
-        statusDot: document.getElementById('status-dot')
+        statusDot: document.getElementById('status-dot'),
+        searchInput: document.getElementById('search-input'),
+        clearSearch: document.getElementById('clear-search'),
+        selectionBar: document.getElementById('selection-bar'),
+        selectionCount: document.getElementById('selection-count'),
+        selectionGroupsCount: document.getElementById('selection-groups-count'),
+        replyBox: document.getElementById('reply-box'),
+        replyUser: document.getElementById('reply-user'),
+        replyText: document.getElementById('reply-text'),
+        replyGroups: document.getElementById('reply-groups'),
+        replyMessage: document.getElementById('reply-message')
       };
+
+      // --- Search ---
+      el.searchInput.addEventListener('input', (e) => {
+        state.searchQuery = e.target.value.toLowerCase();
+        el.clearSearch.classList.toggle('hidden', !state.searchQuery);
+        renderChats();
+      });
+
+      el.clearSearch.addEventListener('click', () => {
+        el.searchInput.value = '';
+        state.searchQuery = '';
+        el.clearSearch.classList.add('hidden');
+        renderChats();
+      });
 
       // --- Socket Events ---
       socket.on('connect', () => {
-        console.log('✅ Conectado ao servidor');
+        console.log('Conectado');
         setStatus('Conectado', true);
         fetchGroups();
         loadSelectedGroupsHistory();
       });
 
-      socket.on('disconnect', () => {
-        console.log('❌ Desconectado');
-        setStatus('Desconectado', false);
-      });
+      socket.on('disconnect', () => setStatus('Desconectado', false));
 
       socket.on('ready', () => {
         setStatus('WhatsApp Conectado', true);
@@ -281,14 +322,12 @@
       });
 
       socket.on('message', ({ groupId, from, text, timestamp, messageId }) => {
-        // Só mostra se não há filtro ou se grupo está selecionado
         if (state.selectedGroups.size === 0 || state.selectedGroups.has(groupId)) {
           pushChat(groupId, from, text, timestamp, messageId);
         }
       });
 
       socket.on('message_sent', ({ groupId, text, timestamp, messageId }) => {
-        // Só mostra se não há filtro ou se grupo está selecionado
         if (state.selectedGroups.size === 0 || state.selectedGroups.has(groupId)) {
           pushChat(groupId, 'Você', text, timestamp, messageId);
         }
@@ -307,7 +346,7 @@
           const response = await fetch(apiUrl('/api/groups'));
           if (response.ok) {
             state.groups = await response.json();
-            console.log(`✅ ${state.groups.length} grupos carregados`);
+            console.log(`${state.groups.length} grupos carregados`);
           }
         } catch (error) {
           console.error('Erro ao buscar grupos:', error);
@@ -315,9 +354,7 @@
       }
 
       async function loadSelectedGroupsHistory() {
-        // Se tem grupos selecionados da janela principal, usa eles
         if (state.selectedGroups.size > 0) {
-          console.log(`📂 Carregando histórico de ${state.selectedGroups.size} grupos selecionados`);
           for (const groupId of state.selectedGroups) {
             await loadGroupHistory(groupId);
           }
@@ -325,13 +362,11 @@
           return;
         }
 
-        // Fallback: carrega primeiros 10 grupos
         try {
           const response = await fetch(apiUrl('/api/groups'));
           if (response.ok) {
             const groups = await response.json();
             state.groups = groups;
-
             for (const group of groups.slice(0, 10)) {
               await loadGroupHistory(group.id);
             }
@@ -344,32 +379,21 @@
 
       async function loadGroupHistory(groupId) {
         try {
-          const url = apiUrl(`/api/debug/cache/${encodeURIComponent(groupId)}`);
-          const response = await fetch(url);
-
+          const response = await fetch(apiUrl(`/api/debug/cache/${encodeURIComponent(groupId)}`));
           if (response.ok) {
             const data = await response.json();
-
             if (data.messages && data.messages.length > 0) {
               state.chatByGroup.set(groupId, []);
-
               data.messages.forEach(msg => {
                 if (msg.text && msg.text.trim()) {
                   const timestamp = msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now();
-                  pushChat(
-                    groupId,
-                    msg.fromMe ? 'Você' : (msg.from || 'Desconhecido'),
-                    msg.text,
-                    timestamp,
-                    msg.id,
-                    true
-                  );
+                  pushChat(groupId, msg.fromMe ? 'Você' : (msg.from || 'Desconhecido'), msg.text, timestamp, msg.id, true);
                 }
               });
             }
           }
         } catch (error) {
-          console.error(`Erro ao carregar histórico de ${groupId}:`, error);
+          console.error(`Erro histórico ${groupId}:`, error);
         }
       }
 
@@ -377,88 +401,99 @@
         if (!state.chatByGroup.has(groupId)) {
           state.chatByGroup.set(groupId, []);
         }
-
         const chat = state.chatByGroup.get(groupId);
-
-        // Evita duplicatas
-        if (messageId) {
-          const exists = chat.some(m => m.messageId === messageId);
-          if (exists) return;
-        }
+        if (messageId && chat.some(m => m.messageId === messageId)) return;
 
         chat.push({
           who,
           text,
           ts: ts || Date.now(),
-          messageId: messageId || `${Date.now()}-${Math.random()}`
+          messageId: messageId || `${Date.now()}-${Math.random()}`,
+          groupId
         });
 
-        // Ordena por timestamp
         chat.sort((a, b) => a.ts - b.ts);
-
-        // Limita a 150 mensagens
         if (chat.length > 150) {
           state.chatByGroup.set(groupId, chat.slice(-150));
         }
+        if (!isHistory) renderChats();
+      }
 
-        if (!isHistory) {
-          renderChats();
-        }
+      function highlightText(text, query) {
+        if (!query) return escapeHtml(text);
+        const escaped = escapeHtml(text);
+        const regex = new RegExp(`(${escapeRegex(query)})`, 'gi');
+        return escaped.replace(regex, '<span class="highlight-match">$1</span>');
+      }
+
+      function escapeRegex(str) {
+        return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       }
 
       function renderChats() {
         el.chats.innerHTML = '';
 
-        if (state.chatByGroup.size === 0) {
-          el.chats.innerHTML = `
-            <div class="glass-dark rounded-xl p-6 flex flex-col items-center justify-center min-h-[400px]">
-              <svg class="w-16 h-16 text-gray-400 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
-              </svg>
-              <p class="text-gray-500 text-center">
-                Aguardando mensagens...<br>
-                <span class="text-xs">As mensagens dos grupos aparecerão aqui</span>
-              </p>
-            </div>
-          `;
-          return;
-        }
+        let hasResults = false;
+        const query = state.searchQuery;
 
         Array.from(state.chatByGroup.entries()).forEach(([groupId, messages]) => {
           const group = state.groups.find(g => g.id === groupId);
+          const groupName = group?.subject || groupId.split('@')[0];
+
+          // Filtra mensagens pela pesquisa
+          let filteredMessages = messages;
+          if (query) {
+            filteredMessages = messages.filter(msg =>
+              msg.text.toLowerCase().includes(query) ||
+              msg.who.toLowerCase().includes(query) ||
+              groupName.toLowerCase().includes(query)
+            );
+          }
+
+          if (filteredMessages.length === 0 && query) return;
+          hasResults = true;
 
           const chatCard = document.createElement('div');
           chatCard.className = 'glass-dark rounded-xl p-4';
+          chatCard.dataset.groupId = groupId;
 
           const header = `
             <div class="flex items-center justify-between mb-3 pb-2 border-b border-gray-200">
               <div class="flex items-center gap-2">
                 <div class="w-2 h-2 bg-green-500 rounded-full pulse-dot"></div>
-                <h3 class="font-semibold text-gray-800">${escapeHtml(group?.subject || groupId.split('@')[0])}</h3>
+                <h3 class="font-semibold text-gray-800">${query ? highlightText(groupName, query) : escapeHtml(groupName)}</h3>
               </div>
-              <span class="text-xs text-gray-500">${messages.length} mensagens</span>
+              <span class="text-xs text-gray-500">${filteredMessages.length} mensagens</span>
             </div>
           `;
 
           let messagesHtml = '';
-          messages.slice(-50).forEach(msg => {
+          filteredMessages.slice(-50).forEach(msg => {
             const time = new Date(msg.ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
             const isYou = msg.who === 'Você';
+            const isSelected = state.selectedMessages.has(msg.messageId);
 
             messagesHtml += `
-              <div class="message-bubble mb-2 p-2 ${isYou ? 'bg-purple-50' : 'bg-white'} rounded-lg">
+              <div class="message-bubble mb-2 p-2 rounded-lg ${isYou ? 'bg-purple-50' : 'bg-white'} ${isSelected ? 'selected' : ''}"
+                   data-message-id="${msg.messageId}"
+                   data-group-id="${groupId}"
+                   data-who="${escapeHtml(msg.who)}"
+                   data-text="${escapeHtml(msg.text)}"
+                   onclick="toggleMessageSelection(this)">
                 <div class="flex items-start justify-between gap-2">
-                  <span class="font-medium text-sm ${isYou ? 'text-purple-700' : 'text-blue-600'}">${escapeHtml(msg.who)}</span>
+                  <span class="font-medium text-sm ${isYou ? 'text-purple-700' : 'text-blue-600'}">
+                    ${query ? highlightText(msg.who, query) : escapeHtml(msg.who)}
+                  </span>
                   <span class="text-xs text-gray-400">${time}</span>
                 </div>
-                <p class="text-sm text-gray-800 mt-1 break-words">${escapeHtml(msg.text)}</p>
+                <p class="text-sm text-gray-800 mt-1 break-words">${query ? highlightText(msg.text, query) : escapeHtml(msg.text)}</p>
               </div>
             `;
           });
 
           chatCard.innerHTML = header + `
-            <div class="space-y-2 max-h-[600px] overflow-y-auto scrollbar-thin pr-2">
-              ${messagesHtml || '<p class="text-xs text-gray-400 text-center py-4">Sem mensagens ainda</p>'}
+            <div class="space-y-2 max-h-[500px] overflow-y-auto scrollbar-thin pr-2">
+              ${messagesHtml || '<p class="text-xs text-gray-400 text-center py-4">Sem mensagens</p>'}
             </div>
           `;
 
@@ -470,18 +505,169 @@
             scrollContainer.scrollTop = scrollContainer.scrollHeight;
           }
         });
+
+        if (!hasResults) {
+          el.chats.innerHTML = `
+            <div class="glass-dark rounded-xl p-6 flex flex-col items-center justify-center min-h-[400px] col-span-full">
+              <svg class="w-16 h-16 text-gray-400 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+              </svg>
+              <p class="text-gray-500 text-center">
+                ${query ? 'Nenhum resultado encontrado' : 'Aguardando mensagens...'}<br>
+                <span class="text-xs">${query ? 'Tente outro termo de pesquisa' : 'As mensagens aparecerão aqui'}</span>
+              </p>
+            </div>
+          `;
+        }
+
+        updateSelectionUI();
       }
 
-      function refreshChats() {
-        showToast('Atualizando chats...', 'info');
-        state.chatByGroup.clear();
-        loadSelectedGroupsHistory().then(() => {
-          renderChats();
+      // --- Message Selection ---
+      function toggleMessageSelection(element) {
+        const messageId = element.dataset.messageId;
+        const groupId = element.dataset.groupId;
+        const who = element.dataset.who;
+        const text = element.dataset.text;
+
+        if (state.selectedMessages.has(messageId)) {
+          state.selectedMessages.delete(messageId);
+          element.classList.remove('selected');
+        } else {
+          state.selectedMessages.set(messageId, { groupId, who, text });
+          element.classList.add('selected');
+          state.currentUser = who;
+        }
+
+        updateSelectionUI();
+      }
+
+      function selectSameUser() {
+        if (!state.currentUser || state.currentUser === 'Você') {
+          showToast('Selecione uma mensagem de outro usuário primeiro', 'warning');
+          return;
+        }
+
+        // Busca todas as mensagens do mesmo usuário em todos os grupos
+        let count = 0;
+        state.chatByGroup.forEach((messages, groupId) => {
+          messages.forEach(msg => {
+            if (msg.who === state.currentUser && !state.selectedMessages.has(msg.messageId)) {
+              state.selectedMessages.set(msg.messageId, {
+                groupId,
+                who: msg.who,
+                text: msg.text
+              });
+              count++;
+            }
+          });
         });
+
+        renderChats();
+        showToast(`${count} mensagens adicionadas de "${state.currentUser}"`, 'success');
+      }
+
+      function clearSelection() {
+        state.selectedMessages.clear();
+        state.currentUser = null;
+        renderChats();
+        el.replyBox.classList.remove('visible');
+      }
+
+      function updateSelectionUI() {
+        const count = state.selectedMessages.size;
+        const groups = new Set(Array.from(state.selectedMessages.values()).map(m => m.groupId));
+
+        el.selectionCount.textContent = count;
+        el.selectionGroupsCount.textContent = groups.size;
+        el.selectionBar.classList.toggle('hidden', count === 0);
+
+        if (count > 0) {
+          el.replyBox.classList.add('visible');
+
+          // Pega info da primeira mensagem selecionada
+          const firstMsg = Array.from(state.selectedMessages.values())[0];
+          el.replyUser.textContent = firstMsg.who;
+          el.replyText.textContent = firstMsg.text.substring(0, 100) + (firstMsg.text.length > 100 ? '...' : '');
+
+          const groupNames = Array.from(groups).map(gid => {
+            const g = state.groups.find(gr => gr.id === gid);
+            return g?.subject || gid.split('@')[0];
+          });
+          el.replyGroups.textContent = `Responder em: ${groupNames.join(', ')}`;
+        } else {
+          el.replyBox.classList.remove('visible');
+        }
+      }
+
+      function cancelReply() {
+        clearSelection();
+      }
+
+      async function sendReply() {
+        const text = el.replyMessage.value.trim();
+        if (!text) {
+          showToast('Digite uma mensagem', 'error');
+          return;
+        }
+
+        if (state.selectedMessages.size === 0) {
+          showToast('Selecione mensagens para responder', 'error');
+          return;
+        }
+
+        // Agrupa por grupo
+        const groupMessages = new Map();
+        state.selectedMessages.forEach((msg, msgId) => {
+          if (!groupMessages.has(msg.groupId)) {
+            groupMessages.set(msg.groupId, []);
+          }
+          groupMessages.get(msg.groupId).push({ ...msg, messageId: msgId });
+        });
+
+        const groupIds = Array.from(groupMessages.keys());
+
+        try {
+          // Pega a primeira mensagem de cada grupo para usar como reply
+          const firstMsg = Array.from(state.selectedMessages.values())[0];
+
+          const response = await fetch(apiUrl('/api/send'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              groupIds,
+              message: text,
+              sessionId: SESSION_ID,
+              replyTo: {
+                text: firstMsg.text,
+                from: firstMsg.who
+              }
+            })
+          });
+
+          const data = await response.json();
+          if (data.ok) {
+            showToast(`Mensagem enviada para ${groupIds.length} grupo(s)!`, 'success');
+            el.replyMessage.value = '';
+            clearSelection();
+          } else {
+            throw new Error(data.error || 'Erro ao enviar');
+          }
+        } catch (error) {
+          showToast(`Erro: ${error.message}`, 'error');
+        }
+      }
+
+      // --- Utilities ---
+      function refreshChats() {
+        showToast('Atualizando...', 'info');
+        state.chatByGroup.clear();
+        loadSelectedGroupsHistory();
       }
 
       function clearChats() {
         state.chatByGroup.clear();
+        clearSelection();
         renderChats();
         showToast('Chats limpos', 'success');
       }
@@ -496,36 +682,40 @@
       function showToast(message, type = 'info') {
         const toast = document.createElement('div');
         toast.className = `
-          px-6 py-3 rounded-xl shadow-lg mb-3 transform translate-x-0 transition-all duration-300
+          px-6 py-3 rounded-xl shadow-lg mb-3 transform transition-all duration-300
           ${type === 'success' ? 'bg-gradient-to-r from-green-500 to-emerald-600 text-white' :
             type === 'error' ? 'bg-gradient-to-r from-red-500 to-pink-600 text-white' :
             type === 'warning' ? 'bg-gradient-to-r from-amber-500 to-orange-600 text-white' :
             'bg-gradient-to-r from-blue-500 to-indigo-600 text-white'}
         `;
-
-        toast.innerHTML = `
-          <div class="flex items-center gap-3">
-            <span class="font-medium">${message}</span>
-          </div>
-        `;
-
-        const container = document.getElementById('toast-container');
-        container.appendChild(toast);
-
+        toast.innerHTML = `<span class="font-medium">${message}</span>`;
+        document.getElementById('toast-container').appendChild(toast);
         setTimeout(() => {
-          toast.style.transform = 'translateX(400px)';
           toast.style.opacity = '0';
           setTimeout(() => toast.remove(), 300);
         }, 3000);
       }
 
-      // Initialize - aguarda conexão e carrega dados
-      socket.emit('request-status');
+      // Keyboard shortcuts
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          if (state.selectedMessages.size > 0) {
+            clearSelection();
+          } else if (state.searchQuery) {
+            el.searchInput.value = '';
+            state.searchQuery = '';
+            el.clearSearch.classList.add('hidden');
+            renderChats();
+          }
+        }
+        if (e.ctrlKey && e.key === 'Enter' && state.selectedMessages.size > 0) {
+          sendReply();
+        }
+      });
 
-      // Renderiza após carregar histórico
-      setTimeout(() => {
-        renderChats();
-      }, 2000);
+      // Init
+      socket.emit('request-status');
+      setTimeout(renderChats, 2000);
     </script>
   </body>
 </html>
