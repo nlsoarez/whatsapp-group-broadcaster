@@ -302,7 +302,17 @@ class SessionManager {
       // Handler para histórico sincronizado
       sock.ev.on('messaging-history.set', async ({ chats, contacts, messages, isLatest }) => {
         try {
-          console.log(`📜 [${sessionId}] Histórico recebido: ${messages?.length || 0} mensagens, ${chats?.length || 0} chats`)
+          console.log(`📜 [${sessionId}] Histórico recebido: ${messages?.length || 0} mensagens, ${chats?.length || 0} chats, ${contacts?.length || 0} contatos`)
+
+          // Armazena contatos para buscar nomes
+          if (contacts && contacts.length > 0) {
+            if (!session.store.contacts) session.store.contacts = {}
+            contacts.forEach(c => {
+              if (c.id) {
+                session.store.contacts[c.id] = c.name || c.notify || c.verifiedName || c.id.split('@')[0]
+              }
+            })
+          }
 
           if (messages && messages.length > 0) {
             for (const msg of messages) {
@@ -316,11 +326,38 @@ class SessionManager {
                 session.store.messages[from] = []
               }
 
+              // Tenta obter o nome do remetente de várias fontes
+              const participant = msg.key?.participant || msg.participant
+              let senderName = msg.pushName || msg.verifiedBizName
+
+              // Se não tem pushName, tenta do mapa de contatos
+              if (!senderName && participant && session.store.contacts) {
+                senderName = session.store.contacts[participant]
+              }
+
+              // Se ainda não tem, extrai do número (formata melhor)
+              if (!senderName && participant) {
+                const number = participant.split('@')[0]
+                // Formata número brasileiro
+                if (number.length >= 10) {
+                  senderName = number.replace(/^55(\d{2})(\d{5})(\d{4})$/, '($1) $2-$3')
+                    .replace(/^55(\d{2})(\d{4})(\d{4})$/, '($1) $2-$3')
+                }
+                if (!senderName || senderName === number) {
+                  senderName = number
+                }
+              }
+
+              // Fallback
+              if (!senderName) {
+                senderName = 'Desconhecido'
+              }
+
               const msgData = {
                 key: msg.key,
                 message: msg.message,
                 messageTimestamp: msg.messageTimestamp,
-                pushName: msg.pushName || msg.key?.participant?.split('@')[0] || 'Usuário'
+                pushName: senderName
               }
 
               // Evita duplicatas
