@@ -167,7 +167,7 @@ class SessionManager {
         keepAliveIntervalMs: 30000,
         emitOwnEvents: true,
         generateHighQualityLinkPreview: true,
-        syncFullHistory: false,
+        syncFullHistory: true,
         markOnlineOnConnect: true,
         defaultQueryTimeoutMs: undefined,
         getMessage: async (key) => {
@@ -281,6 +281,54 @@ class SessionManager {
           }
         } catch (error) {
           console.error(`Erro ao processar mensagens para ${sessionId}:`, error)
+        }
+      })
+
+      // Handler para histórico sincronizado
+      sock.ev.on('messaging-history.set', async ({ chats, contacts, messages, isLatest }) => {
+        try {
+          console.log(`📜 [${sessionId}] Histórico recebido: ${messages?.length || 0} mensagens, ${chats?.length || 0} chats`)
+
+          if (messages && messages.length > 0) {
+            for (const msg of messages) {
+              const from = msg.key?.remoteJid
+              if (!from || from === 'status@broadcast') continue
+
+              // Apenas grupos
+              if (!from.includes('@g.us')) continue
+
+              if (!session.store.messages[from]) {
+                session.store.messages[from] = []
+              }
+
+              const msgData = {
+                key: msg.key,
+                message: msg.message,
+                messageTimestamp: msg.messageTimestamp,
+                pushName: msg.pushName || msg.key?.participant?.split('@')[0] || 'Usuário'
+              }
+
+              // Evita duplicatas
+              const exists = session.store.messages[from].some(m => m.key?.id === msg.key?.id)
+              if (!exists) {
+                session.store.messages[from].push(msgData)
+              }
+            }
+
+            // Ordena e limita
+            for (const groupId of Object.keys(session.store.messages)) {
+              session.store.messages[groupId].sort((a, b) =>
+                (a.messageTimestamp || 0) - (b.messageTimestamp || 0)
+              )
+              if (session.store.messages[groupId].length > 200) {
+                session.store.messages[groupId] = session.store.messages[groupId].slice(-200)
+              }
+            }
+
+            console.log(`✅ [${sessionId}] Histórico processado para ${Object.keys(session.store.messages).length} grupos`)
+          }
+        } catch (error) {
+          console.error(`Erro ao processar histórico para ${sessionId}:`, error)
         }
       })
 
