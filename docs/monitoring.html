@@ -106,21 +106,26 @@
               <p class="text-sm text-gray-600">Visualização expandida - Últimas conversas</p>
             </div>
           </div>
-          
+
           <div class="flex items-center gap-3">
+            <!-- Session ID -->
+            <div class="glass-dark px-3 py-2 rounded-lg">
+              <span id="session-display" class="text-xs font-mono text-gray-600"></span>
+            </div>
+
             <!-- Status Badge -->
             <div id="connection-status" class="glass-dark px-4 py-2 rounded-lg flex items-center gap-2">
               <div id="status-dot" class="w-2 h-2 rounded-full bg-gray-400 pulse-dot"></div>
               <span id="status-text" class="text-sm font-medium text-gray-700">Conectando...</span>
             </div>
-            
+
             <!-- Actions -->
             <button onclick="refreshChats()" class="p-2 hover:bg-gray-100 rounded-lg transition" title="Atualizar">
               <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
               </svg>
             </button>
-            
+
             <button onclick="clearChats()" class="p-2 hover:bg-gray-100 rounded-lg transition" title="Limpar">
               <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
@@ -154,14 +159,50 @@
     <div id="toast-container" class="fixed top-4 right-4 z-50"></div>
 
     <script>
-      window.BACKEND_URL = 'https://whatsapp-group-broadcaster.onrender.com';
+      // URL do backend - Railway
+      window.BACKEND_URL = window.location.hostname === 'localhost'
+        ? 'http://localhost:3000'
+        : 'https://web-production-180d.up.railway.app';
+
+      // Pega sessionId da janela pai ou localStorage
+      function getSessionId() {
+        // Tenta da URL
+        const urlParams = new URLSearchParams(window.location.search);
+        let sessionId = urlParams.get('session');
+
+        if (sessionId) return sessionId;
+
+        // Tenta da janela pai (opener)
+        if (window.opener && window.opener.getSessionId) {
+          sessionId = window.opener.getSessionId();
+          if (sessionId) return sessionId;
+        }
+
+        // Tenta do localStorage
+        sessionId = localStorage.getItem('whatsapp_session_id');
+
+        return sessionId || 'monitoring_' + Date.now();
+      }
+
+      const SESSION_ID = getSessionId();
+      console.log('📱 Session ID:', SESSION_ID);
+
+      // Mostra sessionId
+      document.getElementById('session-display').textContent = SESSION_ID.substring(0, 15) + '...';
 
       const socket = io(window.BACKEND_URL, {
+        query: { sessionId: SESSION_ID },
         transports: ['websocket', 'polling'],
         reconnection: true,
-        reconnectionAttempts: 5,
+        reconnectionAttempts: 10,
         reconnectionDelay: 1000
       });
+
+      // Helper para URLs com sessionId
+      function apiUrl(endpoint) {
+        const separator = endpoint.includes('?') ? '&' : '?';
+        return `${window.BACKEND_URL}${endpoint}${separator}sessionId=${SESSION_ID}`;
+      }
 
       const state = {
         groups: [],
@@ -179,6 +220,8 @@
       socket.on('connect', () => {
         console.log('✅ Conectado ao servidor');
         setStatus('Conectado', true);
+        fetchGroups();
+        loadSelectedGroupsHistory();
       });
 
       socket.on('disconnect', () => {
@@ -189,40 +232,38 @@
       socket.on('ready', () => {
         setStatus('WhatsApp Conectado', true);
         fetchGroups();
+        loadSelectedGroupsHistory();
       });
 
       socket.on('status', ({ ready }) => {
         if (ready) {
           setStatus('WhatsApp Conectado', true);
           fetchGroups();
+          loadSelectedGroupsHistory();
         } else {
           setStatus('Aguardando conexão', false);
         }
       });
 
-      socket.on('message', ({ groupId, from, text, timestamp }) => {
-        if (state.selectedGroups.has(groupId) || state.selectedGroups.size === 0) {
-          pushChat(groupId, from, text, timestamp);
-        }
+      socket.on('message', ({ groupId, from, text, timestamp, messageId }) => {
+        pushChat(groupId, from, text, timestamp, messageId);
       });
 
-      socket.on('message_sent', ({ groupId, text, timestamp }) => {
-        if (state.selectedGroups.has(groupId) || state.selectedGroups.size === 0) {
-          pushChat(groupId, 'Você', text, timestamp);
-        }
+      socket.on('message_sent', ({ groupId, text, timestamp, messageId }) => {
+        pushChat(groupId, 'Você', text, timestamp, messageId);
       });
 
       // --- Functions ---
       function setStatus(text, connected) {
         el.status.textContent = text;
-        el.statusDot.className = connected 
-          ? 'w-2 h-2 rounded-full bg-green-500 pulse-dot' 
+        el.statusDot.className = connected
+          ? 'w-2 h-2 rounded-full bg-green-500 pulse-dot'
           : 'w-2 h-2 rounded-full bg-red-500 pulse-dot';
       }
 
       async function fetchGroups() {
         try {
-          const response = await fetch(`${window.BACKEND_URL}/api/groups`);
+          const response = await fetch(apiUrl('/api/groups'));
           if (response.ok) {
             state.groups = await response.json();
             console.log(`✅ ${state.groups.length} grupos carregados`);
@@ -232,28 +273,90 @@
         }
       }
 
-      function pushChat(groupId, who, text, ts) {
+      async function loadSelectedGroupsHistory() {
+        // Carrega histórico de todos os grupos disponíveis
+        try {
+          const response = await fetch(apiUrl('/api/groups'));
+          if (response.ok) {
+            const groups = await response.json();
+
+            // Carrega histórico dos primeiros 10 grupos
+            for (const group of groups.slice(0, 10)) {
+              await loadGroupHistory(group.id);
+            }
+          }
+        } catch (error) {
+          console.error('Erro ao carregar histórico:', error);
+        }
+      }
+
+      async function loadGroupHistory(groupId) {
+        try {
+          const url = apiUrl(`/api/debug/cache/${encodeURIComponent(groupId)}`);
+          const response = await fetch(url);
+
+          if (response.ok) {
+            const data = await response.json();
+
+            if (data.messages && data.messages.length > 0) {
+              state.chatByGroup.set(groupId, []);
+
+              data.messages.forEach(msg => {
+                if (msg.text && msg.text.trim()) {
+                  const timestamp = msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now();
+                  pushChat(
+                    groupId,
+                    msg.fromMe ? 'Você' : (msg.from || 'Desconhecido'),
+                    msg.text,
+                    timestamp,
+                    msg.id,
+                    true
+                  );
+                }
+              });
+            }
+          }
+        } catch (error) {
+          console.error(`Erro ao carregar histórico de ${groupId}:`, error);
+        }
+      }
+
+      function pushChat(groupId, who, text, ts, messageId, isHistory = false) {
         if (!state.chatByGroup.has(groupId)) {
           state.chatByGroup.set(groupId, []);
         }
-        
+
         const chat = state.chatByGroup.get(groupId);
-        chat.push({ who, text, ts: ts || Date.now() });
-        
+
+        // Evita duplicatas
+        if (messageId) {
+          const exists = chat.some(m => m.messageId === messageId);
+          if (exists) return;
+        }
+
+        chat.push({
+          who,
+          text,
+          ts: ts || Date.now(),
+          messageId: messageId || `${Date.now()}-${Math.random()}`
+        });
+
         // Ordena por timestamp
         chat.sort((a, b) => a.ts - b.ts);
-        
+
         // Limita a 150 mensagens
         if (chat.length > 150) {
           state.chatByGroup.set(groupId, chat.slice(-150));
         }
-        
-        renderChats();
+
+        if (!isHistory) {
+          renderChats();
+        }
       }
 
       function renderChats() {
         el.chats.innerHTML = '';
-        
+
         if (state.chatByGroup.size === 0) {
           el.chats.innerHTML = `
             <div class="glass-dark rounded-xl p-6 flex flex-col items-center justify-center min-h-[400px]">
@@ -262,58 +365,67 @@
               </svg>
               <p class="text-gray-500 text-center">
                 Aguardando mensagens...<br>
-                <span class="text-xs">As mensagens dos grupos selecionados aparecerão aqui</span>
+                <span class="text-xs">As mensagens dos grupos aparecerão aqui</span>
               </p>
             </div>
           `;
           return;
         }
-        
+
         Array.from(state.chatByGroup.entries()).forEach(([groupId, messages]) => {
           const group = state.groups.find(g => g.id === groupId);
-          
+
           const chatCard = document.createElement('div');
           chatCard.className = 'glass-dark rounded-xl p-4';
-          
+
           const header = `
             <div class="flex items-center justify-between mb-3 pb-2 border-b border-gray-200">
               <div class="flex items-center gap-2">
                 <div class="w-2 h-2 bg-green-500 rounded-full pulse-dot"></div>
-                <h3 class="font-semibold text-gray-800">${escapeHtml(group?.subject || groupId)}</h3>
+                <h3 class="font-semibold text-gray-800">${escapeHtml(group?.subject || groupId.split('@')[0])}</h3>
               </div>
               <span class="text-xs text-gray-500">${messages.length} mensagens</span>
             </div>
           `;
-          
+
           let messagesHtml = '';
           messages.slice(-50).forEach(msg => {
-            const time = new Date(msg.ts).toLocaleTimeString('pt-BR');
+            const time = new Date(msg.ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
             const isYou = msg.who === 'Você';
-            
+
             messagesHtml += `
               <div class="message-bubble mb-2 p-2 ${isYou ? 'bg-purple-50' : 'bg-white'} rounded-lg">
                 <div class="flex items-start justify-between gap-2">
-                  <span class="font-medium text-sm ${isYou ? 'text-purple-700' : 'text-gray-700'}">${escapeHtml(msg.who)}</span>
+                  <span class="font-medium text-sm ${isYou ? 'text-purple-700' : 'text-blue-600'}">${escapeHtml(msg.who)}</span>
                   <span class="text-xs text-gray-400">${time}</span>
                 </div>
                 <p class="text-sm text-gray-800 mt-1 break-words">${escapeHtml(msg.text)}</p>
               </div>
             `;
           });
-          
+
           chatCard.innerHTML = header + `
             <div class="space-y-2 max-h-[600px] overflow-y-auto scrollbar-thin pr-2">
               ${messagesHtml || '<p class="text-xs text-gray-400 text-center py-4">Sem mensagens ainda</p>'}
             </div>
           `;
-          
+
           el.chats.appendChild(chatCard);
+
+          // Auto scroll
+          const scrollContainer = chatCard.querySelector('.overflow-y-auto');
+          if (scrollContainer) {
+            scrollContainer.scrollTop = scrollContainer.scrollHeight;
+          }
         });
       }
 
       function refreshChats() {
         showToast('Atualizando chats...', 'info');
-        socket.emit('request-status');
+        state.chatByGroup.clear();
+        loadSelectedGroupsHistory().then(() => {
+          renderChats();
+        });
       }
 
       function clearChats() {
@@ -338,16 +450,16 @@
             type === 'warning' ? 'bg-gradient-to-r from-amber-500 to-orange-600 text-white' :
             'bg-gradient-to-r from-blue-500 to-indigo-600 text-white'}
         `;
-        
+
         toast.innerHTML = `
           <div class="flex items-center gap-3">
             <span class="font-medium">${message}</span>
           </div>
         `;
-        
+
         const container = document.getElementById('toast-container');
         container.appendChild(toast);
-        
+
         setTimeout(() => {
           toast.style.transform = 'translateX(400px)';
           toast.style.opacity = '0';
@@ -355,9 +467,13 @@
         }, 3000);
       }
 
-      // Initialize
+      // Initialize - aguarda conexão e carrega dados
       socket.emit('request-status');
-      fetchGroups();
+
+      // Renderiza após carregar histórico
+      setTimeout(() => {
+        renderChats();
+      }, 2000);
     </script>
   </body>
 </html>
