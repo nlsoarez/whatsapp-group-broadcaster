@@ -302,6 +302,45 @@ class SessionManager {
         }
       })
 
+      // Helper para resolver nome de contato
+      const resolveContactName = (participantId, pushName) => {
+        // Primeiro tenta o pushName se não for um número puro
+        if (pushName && !pushName.match(/^\d{10,}$/)) {
+          return pushName
+        }
+
+        if (!participantId) return pushName || 'Desconhecido'
+
+        // Tenta do mapa de contatos
+        if (session.store.contacts) {
+          // ID completo
+          let name = session.store.contacts[participantId]
+          if (name && !name.match(/^\d{10,}$/)) return name
+
+          // Apenas número
+          const number = participantId.split('@')[0]
+          name = session.store.contacts[number]
+          if (name && !name.match(/^\d{10,}$/)) return name
+
+          // Com sufixo @s.whatsapp.net
+          name = session.store.contacts[`${number}@s.whatsapp.net`]
+          if (name && !name.match(/^\d{10,}$/)) return name
+        }
+
+        // Formata número brasileiro
+        if (participantId) {
+          const number = participantId.split('@')[0]
+          if (number.length >= 12 && number.startsWith('55')) {
+            const formatted = number.replace(/^55(\d{2})(\d{5})(\d{4})$/, '($1) $2-$3')
+              .replace(/^55(\d{2})(\d{4})(\d{4})$/, '($1) $2-$3')
+            if (formatted !== number) return formatted
+          }
+          return number
+        }
+
+        return pushName || 'Desconhecido'
+      }
+
       // Handler de mensagens
       sock.ev.on('messages.upsert', async (upsert) => {
         try {
@@ -315,35 +354,16 @@ class SessionManager {
               session.store.messages[from] = []
             }
 
-            // Resolve nome do remetente
+            // Resolve nome do remetente usando helper
             const participant = msg.key.participant || msg.participant
-            let senderName = msg.pushName || msg.verifiedBizName
-
-            // Se não tem pushName, tenta do mapa de contatos
-            if (!senderName && participant && session.store.contacts) {
-              senderName = session.store.contacts[participant]
-            }
-
-            // Se ainda não tem, formata o número
-            if (!senderName && participant) {
-              const number = participant.split('@')[0]
-              // Formata número brasileiro
-              if (number.length >= 12 && number.startsWith('55')) {
-                senderName = number.replace(/^55(\d{2})(\d{5})(\d{4})$/, '($1) $2-$3')
-                  .replace(/^55(\d{2})(\d{4})(\d{4})$/, '($1) $2-$3')
-              }
-              if (!senderName || senderName === number) {
-                senderName = number
-              }
-            }
-
-            if (!senderName) senderName = 'Desconhecido'
+            const senderName = resolveContactName(participant, msg.pushName || msg.verifiedBizName)
 
             const msgData = {
               key: msg.key,
               message: msg.message,
               messageTimestamp: msg.messageTimestamp,
-              pushName: senderName
+              pushName: senderName,
+              participant: participant // Armazena participant para busca posterior
             }
 
             session.store.messages[from].push(msgData)
@@ -410,38 +430,16 @@ class SessionManager {
                 session.store.messages[from] = []
               }
 
-              // Tenta obter o nome do remetente de várias fontes
+              // Resolve nome do remetente usando helper
               const participant = msg.key?.participant || msg.participant
-              let senderName = msg.pushName || msg.verifiedBizName
-
-              // Se não tem pushName, tenta do mapa de contatos
-              if (!senderName && participant && session.store.contacts) {
-                senderName = session.store.contacts[participant]
-              }
-
-              // Se ainda não tem, extrai do número (formata melhor)
-              if (!senderName && participant) {
-                const number = participant.split('@')[0]
-                // Formata número brasileiro
-                if (number.length >= 10) {
-                  senderName = number.replace(/^55(\d{2})(\d{5})(\d{4})$/, '($1) $2-$3')
-                    .replace(/^55(\d{2})(\d{4})(\d{4})$/, '($1) $2-$3')
-                }
-                if (!senderName || senderName === number) {
-                  senderName = number
-                }
-              }
-
-              // Fallback
-              if (!senderName) {
-                senderName = 'Desconhecido'
-              }
+              const senderName = resolveContactName(participant, msg.pushName || msg.verifiedBizName)
 
               const msgData = {
                 key: msg.key,
                 message: msg.message,
                 messageTimestamp: msg.messageTimestamp,
-                pushName: senderName
+                pushName: senderName,
+                participant: participant // Armazena participant para busca posterior
               }
 
               // Evita duplicatas
@@ -609,18 +607,33 @@ class SessionManager {
         let replyFound = false
 
         // Lógica de reply inteligente
-        if (replyInfo?.text) {
+        if (replyInfo?.text || replyInfo?.messageId) {
           const groupMessages = session.store.messages[gid] || []
           console.log(`🔍 [${sessionId}] Buscando mensagem para reply em ${gid} (${groupMessages.length} mensagens no cache)`)
-          console.log(`🔍 Procurando texto: "${replyInfo.text?.substring(0, 50)}" de "${replyInfo.from}"`)
+          console.log(`🔍 Procurando: ID="${replyInfo.messageId}" texto="${replyInfo.text?.substring(0, 50)}" de="${replyInfo.from}"`)
 
-          // Busca exata por texto
-          let originalMessage = groupMessages.find(m => {
-            const msgText = m.message?.conversation || m.message?.extendedTextMessage?.text || ''
-            return msgText === replyInfo.text
-          })
+          let originalMessage = null
 
-          // Busca por similaridade se não encontrar exata (texto começa igual)
+          // 1. PRIORIDADE: Busca direta por messageId (mais confiável)
+          if (replyInfo.messageId) {
+            originalMessage = groupMessages.find(m => m.key?.id === replyInfo.messageId)
+            if (originalMessage) {
+              console.log(`✅ Match exato por messageId: ${replyInfo.messageId}`)
+            }
+          }
+
+          // 2. Busca exata por texto
+          if (!originalMessage && replyInfo.text) {
+            originalMessage = groupMessages.find(m => {
+              const msgText = m.message?.conversation || m.message?.extendedTextMessage?.text || ''
+              return msgText === replyInfo.text
+            })
+            if (originalMessage) {
+              console.log(`✅ Match exato por texto`)
+            }
+          }
+
+          // 3. Busca por similaridade se não encontrar exata (texto começa igual)
           if (!originalMessage && replyInfo.text) {
             const normalized = replyInfo.text.toLowerCase().trim()
             const searchLen = Math.min(normalized.length, 50)
@@ -630,13 +643,13 @@ class SessionManager {
               // Verifica se o texto começa igual ou contém o início do texto buscado
               if (msgText && (msgText.startsWith(normalized.substring(0, searchLen)) || msgText.includes(normalized.substring(0, 30)))) {
                 originalMessage = msg
-                console.log(`✅ Match por similaridade encontrado`)
+                console.log(`✅ Match por similaridade de texto`)
                 break
               }
             }
           }
 
-          // Busca pelo remetente + texto parcial (mais flexível)
+          // 4. Busca pelo remetente + texto parcial (mais flexível)
           if (!originalMessage && replyInfo.from && replyInfo.text) {
             const senderName = replyInfo.from.toLowerCase()
             const textStart = replyInfo.text.toLowerCase().substring(0, 20)
@@ -646,18 +659,18 @@ class SessionManager {
               const msgText = (msg.message?.conversation || msg.message?.extendedTextMessage?.text || '').toLowerCase()
 
               // Match se o remetente é similar e o texto contém o início
-              if (msgSender.includes(senderName.substring(0, 10)) || senderName.includes(msgSender.substring(0, 10))) {
-                if (msgText.includes(textStart)) {
+              if ((msgSender && senderName && (msgSender.includes(senderName.substring(0, 8)) || senderName.includes(msgSender.substring(0, 8))))) {
+                if (msgText && textStart && msgText.includes(textStart)) {
                   originalMessage = msg
-                  console.log(`✅ Match por remetente + texto encontrado`)
+                  console.log(`✅ Match por remetente + texto parcial`)
                   break
                 }
               }
             }
           }
 
-          // Busca nos messagePatterns (índice de texto normalizado)
-          if (!originalMessage && session.store.messagePatterns) {
+          // 5. Busca nos messagePatterns (índice de texto normalizado)
+          if (!originalMessage && session.store.messagePatterns && replyInfo.text) {
             const normalizedSearch = replyInfo.text.toLowerCase().trim().replace(/\s+/g, ' ')
             const patternMatch = session.store.messagePatterns[normalizedSearch]
 
@@ -665,7 +678,22 @@ class SessionManager {
               const matchInGroup = patternMatch.find(p => p.groupId === gid)
               if (matchInGroup) {
                 originalMessage = groupMessages.find(m => m.key?.id === matchInGroup.messageId)
-                console.log(`✅ Match por messagePatterns encontrado`)
+                if (originalMessage) {
+                  console.log(`✅ Match por messagePatterns`)
+                }
+              }
+            }
+          }
+
+          // 6. Última tentativa: busca por qualquer texto que contenha a string
+          if (!originalMessage && replyInfo.text && replyInfo.text.length >= 10) {
+            const searchText = replyInfo.text.toLowerCase().trim().substring(0, 40)
+            for (const msg of groupMessages) {
+              const msgText = (msg.message?.conversation || msg.message?.extendedTextMessage?.text || '').toLowerCase().trim()
+              if (msgText && msgText.includes(searchText)) {
+                originalMessage = msg
+                console.log(`✅ Match por busca parcial de texto`)
+                break
               }
             }
           }
@@ -746,52 +774,57 @@ class SessionManager {
     if (!session) return []
 
     const messages = session.store.messages[groupId] || []
+
     // Helper para buscar nome do contato com diferentes formatos de ID
-    const getContactName = (participantId) => {
-      if (!participantId || !session.store.contacts) return null
+    const getContactName = (participantId, pushName) => {
+      // Primeiro tenta o pushName se não for um número puro
+      if (pushName && !pushName.match(/^\d{10,}$/)) {
+        return pushName
+      }
 
-      // Tenta com ID completo
-      let name = session.store.contacts[participantId]
-      if (name && !name.match(/^\d+$/)) return name
+      if (!participantId) return pushName || null
 
-      // Tenta apenas com número (sem @s.whatsapp.net)
-      const number = participantId.split('@')[0]
-      name = session.store.contacts[number]
-      if (name && !name.match(/^\d+$/)) return name
+      // Tenta do mapa de contatos
+      if (session.store.contacts) {
+        // ID completo
+        let name = session.store.contacts[participantId]
+        if (name && !name.match(/^\d{10,}$/)) return name
 
-      // Tenta com sufixo @s.whatsapp.net
-      name = session.store.contacts[`${number}@s.whatsapp.net`]
-      if (name && !name.match(/^\d+$/)) return name
+        // Apenas número
+        const number = participantId.split('@')[0]
+        name = session.store.contacts[number]
+        if (name && !name.match(/^\d{10,}$/)) return name
 
-      return null
+        // Com sufixo @s.whatsapp.net
+        name = session.store.contacts[`${number}@s.whatsapp.net`]
+        if (name && !name.match(/^\d{10,}$/)) return name
+      }
+
+      // Formata número brasileiro
+      if (participantId) {
+        const number = participantId.split('@')[0]
+        if (number.length >= 12 && number.startsWith('55')) {
+          const formatted = number.replace(/^55(\d{2})(\d{5})(\d{4})$/, '($1) $2-$3')
+            .replace(/^55(\d{2})(\d{4})(\d{4})$/, '($1) $2-$3')
+          if (formatted !== number) return formatted
+        }
+        return number
+      }
+
+      return pushName || null
     }
 
     return messages.map(m => {
-      let senderName = m.pushName
-
-      // Se pushName é um número ou não existe, tenta resolver do mapa de contatos
-      if (!senderName || senderName.match(/^\d+$/)) {
-        const participant = m.key?.participant || m.participant
-        const contactName = getContactName(participant)
-        if (contactName) {
-          senderName = contactName
-        }
-      }
-
-      // Formata número brasileiro se ainda for número
-      if (senderName && senderName.match(/^\d{10,}$/)) {
-        if (senderName.startsWith('55') && senderName.length >= 12) {
-          senderName = senderName.replace(/^55(\d{2})(\d{5})(\d{4})$/, '($1) $2-$3')
-            .replace(/^55(\d{2})(\d{4})(\d{4})$/, '($1) $2-$3')
-        }
-      }
+      const participant = m.key?.participant || m.participant
+      const senderName = getContactName(participant, m.pushName)
 
       return {
         id: m.key?.id,
         text: m.message?.conversation || m.message?.extendedTextMessage?.text,
         from: senderName || 'Desconhecido',
         fromMe: m.key?.fromMe,
-        timestamp: new Date(m.messageTimestamp * 1000).toISOString()
+        timestamp: new Date(m.messageTimestamp * 1000).toISOString(),
+        participant: participant // Inclui participant para referência
       }
     })
   }
