@@ -1,18 +1,23 @@
 {
-"name": "whatsapp-group-broadcaster-backend",
-"version": "1.0.0",
-"type": "module",
-"main": "index.js",
-"scripts": {
-"start": "node index.js"
-},
-"dependencies": {
-"@whiskeysockets/baileys": "^6.7.10",
-"cors": "^2.8.5",
-"dotenv": "^16.4.5",
-"express": "^4.19.2",
-"pino": "^9.3.2",
-"qrcode": "^1.5.3",
-"socket.io": "^4.7.5"
-}
+  "name": "whatsapp-group-broadcaster-backend",
+  "version": "2.0.0",
+  "description": "WhatsApp Group Broadcaster - Multi-Session (5 users)",
+  "type": "module",
+  "main": "index.js",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.10",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "pino": "^9.3.2",
+    "qrcode": "^1.5.3",
+    "socket.io": "^4.7.5"
+  }
 }

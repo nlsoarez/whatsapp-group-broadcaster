@@ -1,9 +1,38 @@
-// app.js - Versão Otimizada e Corrigida
+// app.js - Versão Multi-Sessão (5 usuários)
 document.addEventListener('DOMContentLoaded', () => {
+
+  // --- Gerenciamento de Sessão do Usuário ---
+  function getOrCreateSessionId() {
+    // Primeiro verifica se há um sessionId na URL (para links diretos)
+    const urlParams = new URLSearchParams(window.location.search);
+    let sessionId = urlParams.get('session');
+
+    if (sessionId) {
+      localStorage.setItem('whatsapp_session_id', sessionId);
+      return sessionId;
+    }
+
+    // Depois verifica localStorage
+    sessionId = localStorage.getItem('whatsapp_session_id');
+
+    if (!sessionId) {
+      // Gera novo ID único
+      sessionId = 'user_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+      localStorage.setItem('whatsapp_session_id', sessionId);
+    }
+
+    return sessionId;
+  }
+
+  const SESSION_ID = getOrCreateSessionId();
+  console.log('📱 Session ID:', SESSION_ID);
+
+  // Conecta Socket.IO com sessionId
   const socket = io(window.BACKEND_URL, {
+    query: { sessionId: SESSION_ID },
     transports: ['websocket', 'polling'],
     reconnection: true,
-    reconnectionAttempts: 5,
+    reconnectionAttempts: 10,
     reconnectionDelay: 1000
   });
 
@@ -26,7 +55,9 @@ document.addEventListener('DOMContentLoaded', () => {
     replyBox: document.getElementById('reply-indicator-box'),
     replyPreview: document.getElementById('reply-preview'),
     resetBtn: document.getElementById('reset-session-btn'),
-    logoutBtn: document.getElementById('logout-btn')
+    logoutBtn: document.getElementById('logout-btn'),
+    sessionInfo: document.getElementById('session-info'),
+    sessionIdDisplay: document.getElementById('session-id-display')
   };
 
   const state = {
@@ -41,8 +72,20 @@ document.addEventListener('DOMContentLoaded', () => {
       delivered: 0,
       read: 0
     },
-    isLoadingHistory: new Set() // Track loading state per group
+    isLoadingHistory: new Set()
   };
+
+  // Exibe o Session ID na UI
+  if (el.sessionIdDisplay) {
+    el.sessionIdDisplay.textContent = SESSION_ID.substring(0, 15) + '...';
+    el.sessionIdDisplay.title = SESSION_ID;
+  }
+
+  // --- Helper para adicionar sessionId nas URLs ---
+  function apiUrl(endpoint) {
+    const separator = endpoint.includes('?') ? '&' : '?';
+    return `${window.BACKEND_URL}${endpoint}${separator}sessionId=${SESSION_ID}`;
+  }
 
   // --- Inicialização ---
   initializeEventListeners();
@@ -61,10 +104,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function setStatus(text, connected) {
     el.status.textContent = text;
-    el.statusDot.className = connected 
-      ? 'w-2 h-2 rounded-full bg-green-500 pulse-dot' 
+    el.statusDot.className = connected
+      ? 'w-2 h-2 rounded-full bg-green-500 pulse-dot'
       : 'w-2 h-2 rounded-full bg-red-500 pulse-dot';
-    
+
     const badge = document.getElementById('connection-status');
     if (connected) {
       badge.classList.remove('glass-dark');
@@ -77,7 +120,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function renderGroups() {
     el.groups.innerHTML = '';
-    
+
     if (state.filteredGroups.length === 0) {
       el.groups.innerHTML = `
         <div class="text-center py-8 text-gray-500">
@@ -86,76 +129,71 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
       return;
     }
-    
+
     state.filteredGroups.forEach(g => {
       const div = document.createElement('div');
       const isSelected = state.selected.has(g.id);
       const messageCount = state.chatByGroup.get(g.id)?.length || 0;
-      
+
       div.className = 'group-item flex items-center gap-3 p-3 bg-white/50 hover:bg-white/70 rounded-xl cursor-pointer transition-all';
       div.dataset.groupId = g.id;
-      
+
       div.innerHTML = `
-        <input type="checkbox" 
+        <input type="checkbox"
           class="group-checkbox w-5 h-5 rounded border-2 accent-purple-600"
           data-group-id="${g.id}"
           ${isSelected ? 'checked' : ''}
         >
-        
-        <img 
+
+        <img
           src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23999'%3E%3Cpath d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z'/%3E%3C/svg%3E"
           class="w-10 h-10 rounded-full object-cover bg-gray-100 group-picture"
           data-group-id="${g.id}"
         >
-        
+
         <div class="flex-1 min-w-0">
           <p class="font-medium text-gray-800 truncate">${escapeHtml(g.subject)}</p>
           <p class="text-xs text-gray-500">${g.participants || 0} participantes</p>
         </div>
-        
+
         ${messageCount > 0 ? `
           <div class="px-2 py-1 bg-purple-100 text-purple-700 rounded-full text-xs font-medium">
             ${messageCount}
           </div>
         ` : ''}
-        
+
         ${state.isLoadingHistory.has(g.id) ? `
           <div class="animate-spin h-4 w-4 border-2 border-purple-500 border-t-transparent rounded-full"></div>
         ` : ''}
       `;
-      
-      // Checkbox handler - OTIMIZADO
+
       const checkbox = div.querySelector('.group-checkbox');
       checkbox.addEventListener('click', (e) => {
-        e.stopPropagation(); // Previne duplo trigger
+        e.stopPropagation();
         handleGroupSelection(g.id, checkbox.checked);
       });
-      
-      // Div click handler
+
       div.addEventListener('click', (e) => {
-        if (e.target === checkbox) return; // Ignora se clicou no checkbox
+        if (e.target === checkbox) return;
         checkbox.checked = !checkbox.checked;
         handleGroupSelection(g.id, checkbox.checked);
       });
-      
+
       el.groups.appendChild(div);
-      
-      // Carrega foto do grupo de forma assíncrona
       loadGroupPicture(g.id);
     });
-    
+
     updateUI();
   }
 
   function handleGroupSelection(groupId, isSelected) {
     if (isSelected) {
       state.selected.add(groupId);
-      loadGroupHistory(groupId); // Carrega histórico
+      loadGroupHistory(groupId);
     } else {
       state.selected.delete(groupId);
-      // Remove mensagens do grupo desmarcado
       if (state.chatByGroup.has(groupId)) {
-        renderChats(); // Re-renderiza sem esse grupo
+        renderChats();
       }
     }
     updateUI();
@@ -163,7 +201,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function loadGroupPicture(groupId) {
     try {
-      const response = await fetch(`${window.BACKEND_URL}/api/group-picture/${groupId}`);
+      const response = await fetch(apiUrl(`/api/group-picture/${groupId}`));
       if (response.ok) {
         const data = await response.json();
         if (data.url) {
@@ -172,84 +210,63 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
     } catch (error) {
-      // Silently fail for group pictures
+      // Silently fail
     }
   }
 
   async function loadGroupHistory(groupId) {
-    if (state.isLoadingHistory.has(groupId)) {
-      console.log(`⏳ Já está carregando histórico de ${groupId}`);
-      return;
-    }
-    
-    console.log(`🔄 Iniciando carregamento de histórico para ${groupId}`);
+    if (state.isLoadingHistory.has(groupId)) return;
+
+    console.log(`🔄 Carregando histórico para ${groupId}`);
     state.isLoadingHistory.add(groupId);
-    
-    // Atualiza UI para mostrar loading
+
     const groupEl = document.querySelector(`.group-item[data-group-id="${groupId}"]`);
     if (groupEl && !groupEl.querySelector('.animate-spin')) {
       const loader = document.createElement('div');
       loader.className = 'animate-spin h-4 w-4 border-2 border-purple-500 border-t-transparent rounded-full';
       groupEl.appendChild(loader);
     }
-    
+
     try {
-      // Tenta buscar do cache/debug endpoint
-      const url = `${window.BACKEND_URL}/api/debug/cache/${encodeURIComponent(groupId)}`;
-      console.log(`🌐 Buscando histórico em: ${url}`);
-      
+      const url = apiUrl(`/api/debug/cache/${encodeURIComponent(groupId)}`);
       const response = await fetch(url);
-      console.log(`📡 Response status: ${response.status}`);
-      
+
       if (response.ok) {
         const data = await response.json();
-        console.log(`📦 Dados recebidos:`, data);
-        
+
         if (data.messages && data.messages.length > 0) {
-          // Limpa mensagens antigas deste grupo (não duplicar)
           state.chatByGroup.set(groupId, []);
-          
+
           let addedCount = 0;
-          // Adiciona mensagens do histórico
           data.messages.forEach(msg => {
             if (msg.text && msg.text.trim()) {
-              // Converte timestamp string para número se necessário
               const timestamp = msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now();
-              
               pushChat(
-                groupId, 
+                groupId,
                 msg.fromMe ? 'Você' : (msg.from || 'Desconhecido'),
                 msg.text,
                 timestamp,
                 msg.id || `hist-${Date.now()}-${Math.random()}`,
                 null,
-                true // isHistory flag
+                true
               );
               addedCount++;
             }
           });
-          
-          console.log(`✅ ${addedCount}/${data.messages.length} mensagens adicionadas ao histórico de ${groupId}`);
-          showToast(`Histórico carregado: ${addedCount} mensagens`, 'success');
+
+          console.log(`✅ ${addedCount} mensagens carregadas para ${groupId}`);
+          showToast(`Histórico: ${addedCount} mensagens`, 'success');
         } else {
-          console.log(`📭 Sem mensagens no histórico de ${groupId}`);
-          showToast('Sem histórico disponível para este grupo', 'info');
+          showToast('Sem histórico disponível', 'info');
         }
-      } else {
-        console.error(`❌ Erro HTTP ${response.status} ao buscar histórico`);
-        showToast(`Erro ao carregar histórico (${response.status})`, 'error');
       }
     } catch (error) {
-      console.error(`❌ Erro ao carregar histórico de ${groupId}:`, error);
+      console.error(`Erro ao carregar histórico:`, error);
       showToast(`Erro: ${error.message}`, 'error');
     } finally {
       state.isLoadingHistory.delete(groupId);
-      
-      // Remove loader
       const loader = document.querySelector(`.group-item[data-group-id="${groupId}"] .animate-spin`);
       if (loader) loader.remove();
-      
-      // Sempre renderiza, mesmo sem mensagens
       renderChats();
     }
   }
@@ -257,7 +274,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function updateUI() {
     el.groupsCount.textContent = `${state.groups.length} grupos disponíveis`;
     el.selectedCount.textContent = state.selected.size;
-    
+
     const count = state.selected.size;
     if (count > 0) {
       el.send.innerHTML = `
@@ -278,7 +295,7 @@ document.addEventListener('DOMContentLoaded', () => {
       el.send.classList.add('opacity-50', 'cursor-not-allowed');
       el.send.disabled = true;
     }
-    
+
     el.sentCount.textContent = state.stats.sent;
     el.deliveredCount.textContent = state.stats.delivered;
     el.readCount.textContent = state.stats.read;
@@ -289,35 +306,32 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!state.chatByGroup.has(groupId)) {
       state.chatByGroup.set(groupId, []);
     }
-    
+
     const chat = state.chatByGroup.get(groupId);
-    
-    // Evita duplicatas por messageId
+
     if (messageId) {
       const exists = chat.some(m => m.messageId === messageId);
       if (exists) return;
     }
-    
-    chat.push({ 
-      who, 
-      text, 
-      ts: ts || Date.now(), 
+
+    chat.push({
+      who,
+      text,
+      ts: ts || Date.now(),
       messageId: messageId || `${Date.now()}-${Math.random()}`,
-      replyText 
+      replyText
     });
-    
-    // Ordena por timestamp
+
     chat.sort((a, b) => a.ts - b.ts);
-    
-    // Limita a 100 mensagens
+
     if (chat.length > 100) {
       state.chatByGroup.set(groupId, chat.slice(-100));
     }
-    
+
     if (messageId && groupId) {
       state.messageIdMap.set(`${groupId}:${text}`, messageId);
     }
-    
+
     if (!isHistory) {
       renderChats();
     }
@@ -325,9 +339,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function renderChats() {
     el.chats.innerHTML = '';
-    
+
     const selectedGroups = Array.from(state.selected);
-    
+
     if (selectedGroups.length === 0) {
       el.chats.innerHTML = `
         <div class="glass-dark rounded-xl p-6 flex flex-col items-center justify-center min-h-[300px]">
@@ -342,16 +356,16 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
       return;
     }
-    
+
     selectedGroups.forEach(groupId => {
       const messages = state.chatByGroup.get(groupId) || [];
       const group = state.groups.find(g => g.id === groupId);
-      
+
       if (!group) return;
-      
+
       const chatCard = document.createElement('div');
       chatCard.className = 'glass-dark rounded-xl p-4';
-      
+
       const header = `
         <div class="flex items-center justify-between mb-3 pb-2 border-b border-gray-200">
           <div class="flex items-center gap-2">
@@ -361,9 +375,9 @@ document.addEventListener('DOMContentLoaded', () => {
           <span class="text-xs text-gray-500">${messages.length} mensagens</span>
         </div>
       `;
-      
+
       let messagesHtml = '';
-      
+
       if (messages.length === 0) {
         messagesHtml = `
           <div class="text-center py-4 text-gray-400 text-sm">
@@ -373,20 +387,20 @@ document.addEventListener('DOMContentLoaded', () => {
       } else {
         messagesHtml = messages.slice(-20).map(m => {
           const isMe = m.who === 'Você';
-          const time = new Date(m.ts).toLocaleTimeString('pt-BR', { 
-            hour: '2-digit', 
-            minute: '2-digit' 
+          const time = new Date(m.ts).toLocaleTimeString('pt-BR', {
+            hour: '2-digit',
+            minute: '2-digit'
           });
-          
+
           return `
-            <div class="message-bubble mb-2 ${isMe ? 'text-right' : ''}" 
+            <div class="message-bubble mb-2 ${isMe ? 'text-right' : ''}"
                  data-message-id="${m.messageId}"
                  data-message-text="${escapeHtml(m.text)}"
                  data-message-from="${escapeHtml(m.who)}"
                  data-group-id="${groupId}">
               <div class="inline-block max-w-[80%] ${
-                isMe 
-                  ? 'bg-gradient-to-r from-purple-500 to-indigo-500 text-white' 
+                isMe
+                  ? 'bg-gradient-to-r from-purple-500 to-indigo-500 text-white'
                   : 'bg-white text-gray-800'
               } rounded-2xl px-4 py-2 shadow-md cursor-pointer hover:shadow-lg transition-all">
                 ${m.replyText ? `
@@ -402,39 +416,36 @@ document.addEventListener('DOMContentLoaded', () => {
           `;
         }).join('');
       }
-      
+
       chatCard.innerHTML = header + `
         <div class="max-h-[400px] overflow-y-auto scrollbar-thin pr-2">
           ${messagesHtml}
         </div>
       `;
-      
-      // Event listeners para reply
+
       chatCard.querySelectorAll('.message-bubble').forEach(bubble => {
         bubble.addEventListener('click', function() {
           const messageText = this.dataset.messageText;
           const sender = this.dataset.messageFrom;
           const messageId = this.dataset.messageId;
           const groupId = this.dataset.groupId;
-          
+
           setReply({
             groupId: groupId,
             text: messageText,
             from: sender,
             messageId: messageId
           });
-          
-          // Visual feedback
+
           document.querySelectorAll('.message-bubble > div').forEach(el => {
             el.classList.remove('ring-2', 'ring-purple-400');
           });
           this.querySelector('div').classList.add('ring-2', 'ring-purple-400');
         });
       });
-      
+
       el.chats.appendChild(chatCard);
-      
-      // Auto scroll
+
       const scrollContainer = chatCard.querySelector('.overflow-y-auto');
       if (scrollContainer) {
         scrollContainer.scrollTop = scrollContainer.scrollHeight;
@@ -444,40 +455,36 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function setReply(replyInfo) {
     state.replyingTo = replyInfo;
-    
+
     el.replyBox.classList.remove('hidden');
     el.replyPreview.innerHTML = `
-      <span class="font-medium">${escapeHtml(replyInfo.from)}</span>: 
+      <span class="font-medium">${escapeHtml(replyInfo.from)}</span>:
       "${escapeHtml(replyInfo.text.substring(0, 100))}${replyInfo.text.length > 100 ? '...' : ''}"
     `;
-    
+
     el.message.focus();
   }
 
   // --- Event Listeners ---
   function initializeEventListeners() {
-    // Pesquisa de grupos - com debounce
     let searchTimeout;
     el.groupSearch.addEventListener('input', (e) => {
       clearTimeout(searchTimeout);
       searchTimeout = setTimeout(() => {
         const search = e.target.value.toLowerCase();
-        state.filteredGroups = state.groups.filter(g => 
+        state.filteredGroups = state.groups.filter(g =>
           g.subject.toLowerCase().includes(search)
         );
         renderGroups();
-      }, 300); // Debounce de 300ms
+      }, 300);
     });
 
-    // Contador de caracteres
     el.message.addEventListener('input', () => {
       el.charCount.textContent = el.message.value.length;
     });
 
-    // Enviar mensagem
     el.send.addEventListener('click', sendMessage);
 
-    // Atalhos de teclado
     document.addEventListener('keydown', (e) => {
       if (e.ctrlKey && e.key === 'Enter' && !el.send.disabled) {
         sendMessage();
@@ -487,58 +494,69 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
 
-    // Reset session
     el.resetBtn.addEventListener('click', resetSession);
 
-    // Logout button (NOVO!)
     if (el.logoutBtn) {
       el.logoutBtn.addEventListener('click', performLogout);
+    }
+
+    // Botão para criar nova sessão
+    const newSessionBtn = document.getElementById('new-session-btn');
+    if (newSessionBtn) {
+      newSessionBtn.addEventListener('click', createNewSession);
+    }
+
+    // Botão para copiar link da sessão
+    const copySessionBtn = document.getElementById('copy-session-btn');
+    if (copySessionBtn) {
+      copySessionBtn.addEventListener('click', copySessionLink);
     }
   }
 
   async function sendMessage() {
     if (el.send.disabled) return;
-    
+
     const text = el.message.value.trim();
-    
+
     if (!text) {
       showToast('Digite uma mensagem', 'error');
       return;
     }
-    
+
     const ids = Array.from(state.selected);
     if (!ids.length) {
       showToast('Selecione pelo menos um grupo', 'warning');
       return;
     }
 
-    const payload = { 
-      groupIds: ids, 
-      message: text 
+    const payload = {
+      groupIds: ids,
+      message: text,
+      sessionId: SESSION_ID
     };
-    
+
     if (state.replyingTo) {
       payload.replyTo = state.replyingTo;
     }
 
     el.send.disabled = true;
     el.send.innerHTML = '<span class="animate-pulse">Enviando...</span>';
-    
+
     try {
-      const response = await fetch(`${window.BACKEND_URL}/api/send`, {
+      const response = await fetch(apiUrl('/api/send'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      
+
       const data = await response.json();
-      
+
       if (!response.ok || !data.ok) {
         throw new Error(data.error || 'Falha no envio');
       }
 
       state.stats.sent += ids.length;
-      
+
       const now = Date.now();
       ids.forEach(groupId => {
         pushChat(groupId, 'Você', text, now, null, state.replyingTo?.text);
@@ -547,16 +565,16 @@ document.addEventListener('DOMContentLoaded', () => {
       el.message.value = '';
       el.charCount.textContent = '0';
       window.cancelReplyFunction();
-      
+
       if (data.summary) {
         showToast(
           `✅ ${data.summary.success}/${data.summary.total} enviados, ${data.summary.replies} como reply`,
           'success'
         );
       } else {
-        showToast('Mensagem enviada com sucesso!', 'success');
+        showToast('Mensagem enviada!', 'success');
       }
-      
+
     } catch (error) {
       showToast(`Erro: ${error.message}`, 'error');
     } finally {
@@ -566,38 +584,38 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function performLogout() {
-    if (!confirm('Deseja realmente fazer logout? Isso desconectará o WhatsApp e você precisará escanear o QR Code novamente.')) {
+    if (!confirm('Deseja realmente fazer logout? Você precisará escanear o QR Code novamente.')) {
       return;
     }
-    
+
     el.logoutBtn.disabled = true;
     el.logoutBtn.innerHTML = '<span class="animate-pulse">Desconectando...</span>';
-    
+
     try {
-      const response = await fetch(`${window.BACKEND_URL}/api/logout`, {
-        method: 'POST'
+      const response = await fetch(apiUrl('/api/logout'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: SESSION_ID })
       });
-      
+
       if (response.ok) {
-        // Limpa estado local
         state.groups = [];
         state.filteredGroups = [];
         state.selected.clear();
         state.chatByGroup.clear();
         state.messageIdMap.clear();
-        
-        // Reseta UI
+
         setStatus('Desconectado', false);
         el.qrCard.classList.remove('hidden');
         el.groups.innerHTML = '';
         el.chats.innerHTML = '';
-        
-        showToast('Logout realizado com sucesso! Aguarde novo QR Code...', 'success');
+
+        showToast('Logout realizado! Aguarde novo QR Code...', 'success');
       } else {
         throw new Error('Falha ao fazer logout');
       }
     } catch (error) {
-      showToast(`Erro ao fazer logout: ${error.message}`, 'error');
+      showToast(`Erro: ${error.message}`, 'error');
     } finally {
       el.logoutBtn.disabled = false;
       el.logoutBtn.innerHTML = `
@@ -611,15 +629,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function resetSession() {
     if (!confirm('Isso desconectará a sessão atual. Continuar?')) return;
-    
+
     el.resetBtn.disabled = true;
     el.resetBtn.innerHTML = '<span class="animate-pulse">Resetando...</span>';
-    
+
     try {
-      const response = await fetch(`${window.BACKEND_URL}/api/reset-session`, {
-        method: 'POST'
+      const response = await fetch(apiUrl('/api/reset-session'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: SESSION_ID })
       });
-      
+
       if (response.ok) {
         showToast('Sessão resetada! Aguarde novo QR...', 'success');
         el.qr.innerHTML = '<div class="loading-skeleton w-full h-full rounded-lg"></div>';
@@ -639,11 +659,27 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  function createNewSession() {
+    if (!confirm('Criar uma nova sessão? Você será desconectado da sessão atual.')) return;
+
+    localStorage.removeItem('whatsapp_session_id');
+    window.location.reload();
+  }
+
+  function copySessionLink() {
+    const url = `${window.location.origin}${window.location.pathname}?session=${SESSION_ID}`;
+    navigator.clipboard.writeText(url).then(() => {
+      showToast('Link da sessão copiado!', 'success');
+    }).catch(() => {
+      showToast('Erro ao copiar', 'error');
+    });
+  }
+
   async function requestInitialData() {
     socket.emit('request-status');
-    
+
     try {
-      const response = await fetch(`${window.BACKEND_URL}/api/groups`);
+      const response = await fetch(apiUrl('/api/groups'));
       if (response.ok) {
         const groups = await response.json();
         state.groups = groups;
@@ -651,7 +687,7 @@ document.addEventListener('DOMContentLoaded', () => {
         renderGroups();
       }
     } catch (error) {
-      console.error('Erro ao buscar grupos iniciais:', error);
+      console.error('Erro ao buscar grupos:', error);
     }
   }
 
@@ -664,6 +700,11 @@ document.addEventListener('DOMContentLoaded', () => {
   socket.on('disconnect', () => {
     console.log('❌ Desconectado');
     setStatus('Desconectado', false);
+  });
+
+  socket.on('error', ({ message }) => {
+    console.error('❌ Erro:', message);
+    showToast(`Erro: ${message}`, 'error');
   });
 
   socket.on('qr', ({ dataUrl }) => {
@@ -679,9 +720,9 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log('✅ WhatsApp conectado');
     setStatus('Conectado', true);
     el.qrCard.classList.add('hidden');
-    
+
     try {
-      const response = await fetch(`${window.BACKEND_URL}/api/groups`);
+      const response = await fetch(apiUrl('/api/groups'));
       if (response.ok) {
         const groups = await response.json();
         state.groups = groups;
@@ -727,8 +768,6 @@ document.addEventListener('DOMContentLoaded', () => {
       state.selected.add(g.id);
       const checkbox = document.querySelector(`.group-checkbox[data-group-id="${g.id}"]`);
       if (checkbox) checkbox.checked = true;
-      
-      // Carrega histórico de todos
       loadGroupHistory(g.id);
     });
     updateUI();
@@ -753,7 +792,6 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   window.refreshChatsFunction = () => {
-    // Recarrega histórico de todos os grupos selecionados
     state.selected.forEach(groupId => {
       loadGroupHistory(groupId);
     });
@@ -767,6 +805,8 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   window.resetSessionFunction = resetSession;
+
+  window.getSessionId = () => SESSION_ID;
 
   // --- Utilities ---
   function escapeHtml(text) {
@@ -785,7 +825,7 @@ document.addEventListener('DOMContentLoaded', () => {
         type === 'warning' ? 'bg-gradient-to-r from-amber-500 to-orange-600 text-white' :
         'bg-gradient-to-r from-blue-500 to-indigo-600 text-white'}
     `;
-    
+
     toast.innerHTML = `
       <div class="flex items-center gap-3">
         ${type === 'success' ? '<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path></svg>' :
@@ -795,16 +835,14 @@ document.addEventListener('DOMContentLoaded', () => {
         <span class="font-medium">${message}</span>
       </div>
     `;
-    
+
     const container = document.getElementById('toast-container');
     container.appendChild(toast);
-    
-    // Animação de entrada
+
     setTimeout(() => {
       toast.style.transform = 'translateX(0)';
     }, 10);
-    
-    // Remove após 3 segundos
+
     setTimeout(() => {
       toast.style.transform = 'translateX(400px)';
       toast.style.opacity = '0';

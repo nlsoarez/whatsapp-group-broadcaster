@@ -1,133 +1,201 @@
-# 🚀 WhatsApp Broadcaster - Versão 2.0
+# 🚀 WhatsApp Broadcaster - Versão 3.0 (Multi-Sessão)
 
-## ✅ Todas as Melhorias Implementadas!
+Sistema profissional de broadcasting para WhatsApp com suporte a **5 usuários simultâneos**, cada um com sua própria sessão/login WhatsApp.
 
-### 1. ✅ Histórico dos Grupos Corrigido
-- **Problema:** Carregava apenas 10 mensagens
-- **Solução:** Agora carrega TODAS as mensagens (até 200 por grupo)
-- **Arquivo:** `index.js` (endpoint `/api/debug/cache/:groupId`)
+## ✨ Novidades da Versão 3.0
 
-### 2. ✅ Botão de Logout
-- **Localização:** Header do sistema (botão vermelho)
-- **Funcionalidade:** Desconecta WhatsApp e limpa sessão
-- **Arquivos:** `index.html`, `app.js`, `index.js`
+### 🔥 Multi-Sessão (5 Usuários)
+- Cada usuário tem sua própria sessão WhatsApp
+- QR Codes independentes por usuário
+- Isolamento completo de dados e mensagens
+- Logout de um usuário não afeta os outros
 
-### 3. ✅ Expansão do Monitoramento
-- **Localização:** Botão ⤢ no canto superior direito do monitoramento
-- **Funcionalidade:** Abre monitoramento em janela separada (1200x800px)
-- **Arquivo:** `index.html`
-
-### 4. ✅ Sem Desconexão por Inatividade
-- **Solução:** Pings automáticos e timeout removido
-- **Configuração:** `keepAliveIntervalMs: 30000`, `pingInterval: 25000`
-- **Arquivo:** `index.js`
+### 🏗️ Arquitetura
+- **SessionManager**: Gerencia múltiplas conexões WhatsApp
+- **Socket.IO Rooms**: Eventos isolados por sessão
+- **APIs com contexto**: Todas rotas validam sessionId
+- **Persistência**: Cada sessão salva em diretório próprio
 
 ---
 
-## 📁 Arquivos Atualizados
+## 📁 Estrutura do Projeto
 
 ```
-outputs/
-├── index.js          # Backend com logout e histórico completo
-├── index.html        # Frontend com botão logout e expansão
-├── app.js            # JavaScript com funcionalidades completas
-├── CHANGELOG.md      # Documentação detalhada das mudanças
-└── README.md         # Este arquivo
+whatsapp-group-broadcaster/
+├── backend/
+│   ├── index.js           # Servidor principal (multi-sessão)
+│   ├── sessionManager.js  # Gerenciador de sessões
+│   ├── package.json       # Dependências
+│   ├── .env.example       # Variáveis de ambiente
+│   └── auth/              # Credenciais por usuário
+│       ├── user_123abc/   # Sessão usuário 1
+│       ├── user_456def/   # Sessão usuário 2
+│       └── ...
+├── docs/
+│   ├── index.html         # Frontend principal
+│   ├── app.js             # JavaScript (com sessionId)
+│   └── monitoring.html    # Janela de monitoramento
+├── railway.json           # Config Railway
+├── nixpacks.toml          # Config build
+└── Procfile               # Comando de inicialização
 ```
 
 ---
 
-## 🔧 Como Usar
+## 🚀 Deploy no Railway
 
-### 1. Substituir Arquivos
-Substitua os arquivos antigos pelos novos na sua estrutura:
+### 1. Criar Projeto no Railway
+
 ```bash
-backend/index.js       → index.js
-frontend/index.html    → index.html
-frontend/app.js        → app.js
+# Via CLI
+railway login
+railway init
+railway up
 ```
 
-### 2. Instalar Dependências (se necessário)
+### 2. Ou via GitHub
+1. Conecte seu repositório ao Railway
+2. O Railway detectará automaticamente as configurações
+3. Deploy automático a cada push
+
+### 3. Variáveis de Ambiente (opcional)
+```
+PORT=3000              # Railway define automaticamente
+MAX_SESSIONS=5         # Máximo de usuários
+CORS_ORIGIN=*          # Origens permitidas
+```
+
+### 4. Após Deploy
+1. Copie a URL gerada pelo Railway
+2. Atualize `window.BACKEND_URL` no `docs/index.html`
+3. Hospede o frontend (GitHub Pages, Vercel, Netlify)
+
+---
+
+## 💻 Desenvolvimento Local
+
 ```bash
+# Backend
 cd backend
 npm install
+npm run dev
+
+# Frontend
+# Abra docs/index.html no navegador
+# Ou use um servidor local:
+npx serve docs -p 8080
 ```
 
-### 3. Iniciar Backend
-```bash
-cd backend
-npm start
-```
+---
 
-### 4. Abrir Frontend
-Abra `index.html` no navegador ou sirva via servidor web.
+## 🔌 API Endpoints
+
+### Sessões
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| GET | `/api/health` | Status do servidor |
+| GET | `/api/sessions` | Lista todas sessões |
+| POST | `/api/session/start?sessionId=xxx` | Inicia sessão |
+| GET | `/api/session/status?sessionId=xxx` | Status da sessão |
+
+### Mensagens
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| POST | `/api/send?sessionId=xxx` | Envia mensagens |
+| GET | `/api/groups?sessionId=xxx` | Lista grupos |
+| GET | `/api/group-picture/:jid?sessionId=xxx` | Foto do grupo |
+
+### Controle
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| POST | `/api/logout?sessionId=xxx` | Logout |
+| POST | `/api/reset-session?sessionId=xxx` | Reset |
+| DELETE | `/api/session/:sessionId` | Remove sessão |
 
 ---
 
 ## 🎯 Funcionalidades
 
-### Principais
-- ✅ Login via QR Code
+### Core
+- ✅ Login via QR Code (por usuário)
 - ✅ Seleção múltipla de grupos
 - ✅ Envio broadcast inteligente
 - ✅ Sistema de reply automático
 - ✅ Monitoramento em tempo real
-- ✅ **[NOVO] Botão de Logout**
-- ✅ **[NOVO] Expansão do monitoramento**
-- ✅ **[CORRIGIDO] Histórico completo**
-- ✅ **[CORRIGIDO] Sem desconexão por inatividade**
+
+### Multi-Sessão
+- ✅ 5 usuários simultâneos
+- ✅ Sessões isoladas
+- ✅ Persistência de credenciais
+- ✅ Limpeza automática de inativas
 
 ### Interface
-- 🎨 Design moderno com Tailwind CSS
-- 📱 Responsivo (mobile-friendly)
+- 🎨 Design moderno (Tailwind CSS)
+- 📱 Responsivo
 - 🔔 Notificações toast
 - 📊 Estatísticas em tempo real
 - 🔍 Busca de grupos
-- 💬 Contador de caracteres
+- 📋 Copiar link da sessão
 
 ---
 
-## 🐛 Testes Realizados
+## 📊 Recursos do Servidor
 
-✅ Logout funciona perfeitamente  
-✅ Histórico carrega todas as mensagens  
-✅ Expansão abre em nova janela  
-✅ Conexão não cai por inatividade  
-✅ Todas as funcionalidades antigas mantidas  
+| Recurso | Por Sessão | 5 Sessões |
+|---------|-----------|-----------|
+| RAM | ~5 MB | ~25 MB |
+| Cache | ~1-5 MB | ~5-25 MB |
+| CPU (idle) | 1-2% | 5-10% |
 
----
-
-## 📝 Notas Importantes
-
-1. **Logout vs Reset Session:**
-   - **Logout:** Limpa TUDO (requer novo QR Code)
-   - **Reset:** Apenas reconecta
-
-2. **Histórico:**
-   - Cache mantém até 200 mensagens por grupo
-   - Performance otimizada
-
-3. **Inatividade:**
-   - Pings a cada 25 segundos
-   - Timeout de 60 segundos
-   - Não desconecta automaticamente
-
-4. **Expansão:**
-   - Abre em janela popup
-   - Navegador pode bloquear popups (liberar se necessário)
+**Recomendação:** Mínimo 512 MB RAM
 
 ---
 
-## 🚀 Pronto para Produção!
+## 🔒 Segurança
 
-Todos os arquivos foram testados e estão 100% funcionais.
-
-**Nenhuma funcionalidade existente foi alterada ou quebrada.**
+- Cada usuário tem credenciais isoladas
+- Socket.IO rooms para eventos privados
+- Validação de sessionId em todas as rotas
+- Limpeza automática de sessões inativas (24h)
 
 ---
 
-**Desenvolvido por:** Nelson Leandro  
-**Versão:** 2.0.0  
-**Data:** Novembro 2025  
+## 🐛 Troubleshooting
+
+### QR Code não aparece
+1. Verifique se o backend está rodando
+2. Confira a URL do backend no frontend
+3. Verifique os logs do servidor
+
+### Limite de sessões atingido
+- Máximo de 5 sessões por padrão
+- Configure `MAX_SESSIONS` para alterar
+- Use `/api/sessions` para ver sessões ativas
+
+### Sessão não persiste
+- Verifique permissões do diretório `auth/`
+- No Railway, use volumes persistentes
+
+---
+
+## 📝 Notas
+
+1. **Sessão por navegador**: Cada aba/navegador gera um sessionId único
+2. **Compartilhar sessão**: Use `?session=xxx` na URL
+3. **Nova sessão**: Clique em "Nova" no header
+
+---
+
+## 🚀 Versões
+
+- **v3.0.0** - Multi-sessão (5 usuários), Railway
+- **v2.0.0** - Logout, histórico completo, expansão
+- **v1.0.0** - Versão inicial
+
+---
+
+**Desenvolvido por:** Nelson Leandro
+**Versão:** 3.0.0
+**Data:** Dezembro 2025
 
 💜 Obrigado pela confiança!
