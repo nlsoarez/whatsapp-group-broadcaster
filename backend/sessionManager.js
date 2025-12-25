@@ -242,6 +242,39 @@ class SessionManager {
 
       sock.ev.on('creds.update', saveCreds)
 
+      // Inicializa mapa de contatos
+      if (!session.store.contacts) session.store.contacts = {}
+
+      // Handler de contatos - contacts.set (sincronização inicial)
+      sock.ev.on('contacts.set', ({ contacts }) => {
+        console.log(`📇 [${sessionId}] Contatos recebidos: ${contacts?.length || 0}`)
+        if (contacts && contacts.length > 0) {
+          contacts.forEach(c => {
+            if (c.id) {
+              const name = c.name || c.notify || c.verifiedName
+              if (name) {
+                session.store.contacts[c.id] = name
+              }
+            }
+          })
+          console.log(`📇 [${sessionId}] Total de contatos armazenados: ${Object.keys(session.store.contacts).length}`)
+        }
+      })
+
+      // Handler de contatos - contacts.upsert (atualizações)
+      sock.ev.on('contacts.upsert', (contacts) => {
+        if (contacts && contacts.length > 0) {
+          contacts.forEach(c => {
+            if (c.id) {
+              const name = c.name || c.notify || c.verifiedName
+              if (name) {
+                session.store.contacts[c.id] = name
+              }
+            }
+          })
+        }
+      })
+
       // Handler de mensagens
       sock.ev.on('messages.upsert', async (upsert) => {
         try {
@@ -488,7 +521,7 @@ class SessionManager {
     }
   }
 
-  // Busca grupos de uma sessão
+  // Busca grupos de uma sessão e armazena participantes
   async getGroups(sessionId) {
     const session = this.sessions.get(sessionId)
     if (!session?.sock || !session.ready) {
@@ -496,6 +529,25 @@ class SessionManager {
     }
 
     const groups = await session.sock.groupFetchAllParticipating()
+
+    // Armazena participantes dos grupos para resolver nomes
+    if (!session.store.contacts) session.store.contacts = {}
+
+    for (const group of Object.values(groups)) {
+      if (group.participants) {
+        for (const participant of group.participants) {
+          // Só sobrescreve se ainda não tem nome ou se é só número
+          const existing = session.store.contacts[participant.id]
+          const name = participant.name || participant.notify || participant.verifiedName
+          if (name && (!existing || existing.match(/^\d+$/))) {
+            session.store.contacts[participant.id] = name
+          }
+        }
+      }
+    }
+
+    console.log(`📇 [${sessionId}] Contatos após grupos: ${Object.keys(session.store.contacts).length}`)
+
     return Object.values(groups).map(g => ({
       id: g.id,
       subject: g.subject || 'Grupo sem nome',
@@ -620,13 +672,36 @@ class SessionManager {
     if (!session) return []
 
     const messages = session.store.messages[groupId] || []
-    return messages.map(m => ({
-      id: m.key?.id,
-      text: m.message?.conversation || m.message?.extendedTextMessage?.text,
-      from: m.pushName,
-      fromMe: m.key?.fromMe,
-      timestamp: new Date(m.messageTimestamp * 1000).toISOString()
-    }))
+    return messages.map(m => {
+      let senderName = m.pushName
+
+      // Se pushName é um número ou não existe, tenta resolver do mapa de contatos
+      if (!senderName || senderName.match(/^\d+$/)) {
+        const participant = m.key?.participant || m.participant
+        if (participant && session.store.contacts) {
+          const contactName = session.store.contacts[participant]
+          if (contactName && !contactName.match(/^\d+$/)) {
+            senderName = contactName
+          }
+        }
+      }
+
+      // Formata número brasileiro se ainda for número
+      if (senderName && senderName.match(/^\d{10,}$/)) {
+        if (senderName.startsWith('55') && senderName.length >= 12) {
+          senderName = senderName.replace(/^55(\d{2})(\d{5})(\d{4})$/, '($1) $2-$3')
+            .replace(/^55(\d{2})(\d{4})(\d{4})$/, '($1) $2-$3')
+        }
+      }
+
+      return {
+        id: m.key?.id,
+        text: m.message?.conversation || m.message?.extendedTextMessage?.text,
+        from: senderName || 'Desconhecido',
+        fromMe: m.key?.fromMe,
+        timestamp: new Date(m.messageTimestamp * 1000).toISOString()
+      }
+    })
   }
 
   // Limpeza de sessões inativas
