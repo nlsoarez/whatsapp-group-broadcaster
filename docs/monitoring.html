@@ -123,59 +123,47 @@
   <body>
     <div class="min-h-screen p-6 pb-40">
       <!-- Header -->
-      <header class="glass-morphism rounded-2xl p-6 mb-6 shadow-xl">
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-4">
-            <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shadow-lg">
-              <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
-              </svg>
+      <header class="glass-morphism rounded-2xl p-4 mb-6 shadow-xl">
+        <div class="flex flex-col gap-4">
+          <!-- Row 1: Title and Actions -->
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shadow-lg">
+                <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+                </svg>
+              </div>
+              <div>
+                <h1 class="text-xl font-bold text-gray-800">Monitoramento em Tempo Real</h1>
+                <p class="text-xs text-gray-600">Clique nas mensagens para selecionar e responder</p>
+              </div>
             </div>
-            <div>
-              <h1 class="text-2xl font-bold text-gray-800">Monitoramento em Tempo Real</h1>
-              <p class="text-sm text-gray-600">Clique nas mensagens para selecionar e responder</p>
+
+            <div class="flex items-center gap-2">
+              <div class="glass-dark px-3 py-2 rounded-lg">
+                <span id="session-display" class="text-xs font-mono text-gray-600"></span>
+              </div>
+              <div id="connection-status" class="glass-dark px-3 py-2 rounded-lg flex items-center gap-2">
+                <div id="status-dot" class="w-2 h-2 rounded-full bg-gray-400 pulse-dot"></div>
+                <span id="status-text" class="text-sm font-medium text-gray-700">Conectando...</span>
+              </div>
+              <button onclick="refreshChats()" class="p-2 hover:bg-gray-100 rounded-lg transition" title="Atualizar">
+                <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                </svg>
+              </button>
+              <button onclick="clearChats()" class="p-2 hover:bg-gray-100 rounded-lg transition" title="Limpar">
+                <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                </svg>
+              </button>
             </div>
           </div>
 
-          <!-- Search Bar -->
-          <div class="flex-1 max-w-md mx-4">
-            <div class="relative">
-              <input type="text" id="search-input" placeholder="Pesquisar mensagens ou grupos..."
-                class="w-full px-4 py-2 pl-10 rounded-xl border border-gray-200 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 outline-none transition">
-              <svg class="w-5 h-5 text-gray-400 absolute left-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
-              </svg>
-            </div>
-          </div>
-
-          <div class="flex items-center gap-3">
-            <!-- Session ID -->
-            <div class="glass-dark px-3 py-2 rounded-lg">
-              <span id="session-display" class="text-xs font-mono text-gray-600"></span>
-            </div>
-
-            <!-- Status Badge -->
-            <div id="connection-status" class="glass-dark px-4 py-2 rounded-lg flex items-center gap-2">
-              <div id="status-dot" class="w-2 h-2 rounded-full bg-gray-400 pulse-dot"></div>
-              <span id="status-text" class="text-sm font-medium text-gray-700">Conectando...</span>
-            </div>
-
-            <!-- Actions -->
-            <button onclick="refreshChats()" class="p-2 hover:bg-gray-100 rounded-lg transition" title="Atualizar">
-              <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-              </svg>
-            </button>
-
-            <button onclick="clearChats()" class="p-2 hover:bg-gray-100 rounded-lg transition" title="Limpar">
-              <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-              </svg>
-            </button>
-
-            <button onclick="window.close()" class="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg transition text-sm font-medium" title="Fechar janela">
-              Fechar
-            </button>
+          <!-- Row 2: Search Bar -->
+          <div class="relative">
+            <input type="text" id="search-input" placeholder="🔍 Pesquisar mensagens, usuários ou grupos..."
+              class="w-full px-4 py-3 pl-4 rounded-xl border border-gray-200 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 outline-none transition text-sm">
           </div>
         </div>
       </header>
@@ -412,24 +400,21 @@
       async function loadSelectedGroupsHistory() {
         // Se tem grupos selecionados da janela principal, usa eles
         if (state.selectedGroups.size > 0) {
-          console.log(`📂 Carregando histórico de ${state.selectedGroups.size} grupos selecionados`);
-          for (const groupId of state.selectedGroups) {
-            await loadGroupHistory(groupId);
-          }
+          console.log(`📂 Carregando histórico de ${state.selectedGroups.size} grupos selecionados em paralelo`);
+          // Carrega todos em paralelo para ser mais rápido
+          await Promise.all(Array.from(state.selectedGroups).map(groupId => loadGroupHistory(groupId)));
           renderChats();
           return;
         }
 
-        // Fallback: carrega primeiros 10 grupos
+        // Fallback: carrega primeiros 10 grupos em paralelo
         try {
           const response = await fetch(apiUrl('/api/groups'));
           if (response.ok) {
             const groups = await response.json();
             state.groups = groups;
 
-            for (const group of groups.slice(0, 10)) {
-              await loadGroupHistory(group.id);
-            }
+            await Promise.all(groups.slice(0, 10).map(group => loadGroupHistory(group.id)));
             renderChats();
           }
         } catch (error) {
