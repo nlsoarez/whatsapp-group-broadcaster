@@ -302,6 +302,63 @@ class SessionManager {
         }
       })
 
+      // Helper para formatar número de telefone
+      const formatPhoneNumber = (number) => {
+        if (!number || !number.match(/^\d+$/)) return number
+
+        // Remove código do país 55 se presente
+        let cleanNumber = number
+        if (cleanNumber.startsWith('55') && cleanNumber.length >= 12) {
+          cleanNumber = cleanNumber.substring(2)
+        }
+
+        // Formatos brasileiros:
+        // 11 dígitos: DDD (2) + celular com 9 (9) = 11912345678 → (11) 91234-5678
+        // 10 dígitos: DDD (2) + fixo (8) = 1112345678 → (11) 1234-5678
+        // 13 dígitos: código país removido acima, mas se ainda tem 13, tenta extrair
+
+        if (cleanNumber.length === 11) {
+          // Celular: (XX) 9XXXX-XXXX
+          return cleanNumber.replace(/^(\d{2})(\d{5})(\d{4})$/, '($1) $2-$3')
+        }
+
+        if (cleanNumber.length === 10) {
+          // Fixo: (XX) XXXX-XXXX
+          return cleanNumber.replace(/^(\d{2})(\d{4})(\d{4})$/, '($1) $2-$3')
+        }
+
+        if (cleanNumber.length === 13) {
+          // Pode ser número com código de país diferente ou formato especial
+          // Tenta extrair DDD + número: primeiros 2 dígitos como DDD
+          const ddd = cleanNumber.substring(0, 2)
+          const rest = cleanNumber.substring(2)
+          if (rest.length === 11) {
+            return `(${ddd}) ${rest.substring(0, 5)}-${rest.substring(5, 9)}`
+          }
+          // Formato genérico para 13 dígitos
+          return `${cleanNumber.substring(0, 2)} ${cleanNumber.substring(2, 7)} ${cleanNumber.substring(7)}`
+        }
+
+        if (cleanNumber.length === 12) {
+          // 55 + 10 dígitos (fixo) - código já removido, mas caso chegue assim
+          return cleanNumber.replace(/^(\d{2})(\d{2})(\d{4})(\d{4})$/, '+$1 ($2) $3-$4')
+        }
+
+        // Para números muito longos (> 13 dígitos), formata de forma genérica
+        if (cleanNumber.length > 13) {
+          // Pega os últimos 11 dígitos e formata como celular brasileiro
+          const last11 = cleanNumber.slice(-11)
+          if (last11.length === 11) {
+            return last11.replace(/^(\d{2})(\d{5})(\d{4})$/, '($1) $2-$3')
+          }
+          // Ou apenas divide em grupos para legibilidade
+          return cleanNumber.replace(/(\d{2})(\d{4,5})(\d{4})$/, '($1) $2-$3')
+        }
+
+        // Números curtos ou formato desconhecido - retorna como está
+        return cleanNumber
+      }
+
       // Helper para resolver nome de contato
       const resolveContactName = (participantId, pushName) => {
         // Primeiro tenta o pushName se não for um número puro
@@ -327,15 +384,10 @@ class SessionManager {
           if (name && !name.match(/^\d{10,}$/)) return name
         }
 
-        // Formata número brasileiro
+        // Formata o número se não encontrou nome
         if (participantId) {
           const number = participantId.split('@')[0]
-          if (number.length >= 12 && number.startsWith('55')) {
-            const formatted = number.replace(/^55(\d{2})(\d{5})(\d{4})$/, '($1) $2-$3')
-              .replace(/^55(\d{2})(\d{4})(\d{4})$/, '($1) $2-$3')
-            if (formatted !== number) return formatted
-          }
-          return number
+          return formatPhoneNumber(number)
         }
 
         return pushName || 'Desconhecido'
@@ -775,7 +827,45 @@ class SessionManager {
 
     const messages = session.store.messages[groupId] || []
 
-    // Helper para buscar nome do contato com diferentes formatos de ID
+    // Helper para formatar número de telefone
+    const formatPhoneNumber = (number) => {
+      if (!number || !number.match(/^\d+$/)) return number
+
+      // Remove código do país 55 se presente
+      let cleanNumber = number
+      if (cleanNumber.startsWith('55') && cleanNumber.length >= 12) {
+        cleanNumber = cleanNumber.substring(2)
+      }
+
+      // Formatos brasileiros
+      if (cleanNumber.length === 11) {
+        return cleanNumber.replace(/^(\d{2})(\d{5})(\d{4})$/, '($1) $2-$3')
+      }
+      if (cleanNumber.length === 10) {
+        return cleanNumber.replace(/^(\d{2})(\d{4})(\d{4})$/, '($1) $2-$3')
+      }
+      if (cleanNumber.length === 13) {
+        const ddd = cleanNumber.substring(0, 2)
+        const rest = cleanNumber.substring(2)
+        if (rest.length === 11) {
+          return `(${ddd}) ${rest.substring(0, 5)}-${rest.substring(5, 9)}`
+        }
+        return `${cleanNumber.substring(0, 2)} ${cleanNumber.substring(2, 7)} ${cleanNumber.substring(7)}`
+      }
+      if (cleanNumber.length === 12) {
+        return cleanNumber.replace(/^(\d{2})(\d{2})(\d{4})(\d{4})$/, '+$1 ($2) $3-$4')
+      }
+      if (cleanNumber.length > 13) {
+        const last11 = cleanNumber.slice(-11)
+        if (last11.length === 11) {
+          return last11.replace(/^(\d{2})(\d{5})(\d{4})$/, '($1) $2-$3')
+        }
+        return cleanNumber.replace(/(\d{2})(\d{4,5})(\d{4})$/, '($1) $2-$3')
+      }
+      return cleanNumber
+    }
+
+    // Helper para buscar nome do contato
     const getContactName = (participantId, pushName) => {
       // Primeiro tenta o pushName se não for um número puro
       if (pushName && !pushName.match(/^\d{10,}$/)) {
@@ -786,29 +876,21 @@ class SessionManager {
 
       // Tenta do mapa de contatos
       if (session.store.contacts) {
-        // ID completo
         let name = session.store.contacts[participantId]
         if (name && !name.match(/^\d{10,}$/)) return name
 
-        // Apenas número
         const number = participantId.split('@')[0]
         name = session.store.contacts[number]
         if (name && !name.match(/^\d{10,}$/)) return name
 
-        // Com sufixo @s.whatsapp.net
         name = session.store.contacts[`${number}@s.whatsapp.net`]
         if (name && !name.match(/^\d{10,}$/)) return name
       }
 
-      // Formata número brasileiro
+      // Formata o número se não encontrou nome
       if (participantId) {
         const number = participantId.split('@')[0]
-        if (number.length >= 12 && number.startsWith('55')) {
-          const formatted = number.replace(/^55(\d{2})(\d{5})(\d{4})$/, '($1) $2-$3')
-            .replace(/^55(\d{2})(\d{4})(\d{4})$/, '($1) $2-$3')
-          if (formatted !== number) return formatted
-        }
-        return number
+        return formatPhoneNumber(number)
       }
 
       return pushName || null
@@ -824,7 +906,7 @@ class SessionManager {
         from: senderName || 'Desconhecido',
         fromMe: m.key?.fromMe,
         timestamp: new Date(m.messageTimestamp * 1000).toISOString(),
-        participant: participant // Inclui participant para referência
+        participant: participant
       }
     })
   }
