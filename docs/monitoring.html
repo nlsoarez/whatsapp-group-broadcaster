@@ -21,6 +21,40 @@
         padding: 0;
       }
 
+      /* Sound toggle animation */
+      .sound-toggle {
+        position: relative;
+        cursor: pointer;
+        transition: all 0.3s ease;
+      }
+      .sound-toggle:hover {
+        transform: scale(1.1);
+      }
+      .sound-toggle.active {
+        color: #10b981;
+      }
+      .sound-toggle.active::after {
+        content: '';
+        position: absolute;
+        top: -2px;
+        right: -2px;
+        width: 8px;
+        height: 8px;
+        background: #10b981;
+        border-radius: 50%;
+        animation: pulse 2s infinite;
+      }
+
+      /* New message notification pulse */
+      .new-message-indicator {
+        animation: newMessagePulse 0.5s ease-out;
+      }
+      @keyframes newMessagePulse {
+        0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+        70% { transform: scale(1.02); box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
+        100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+      }
+
       .glass-morphism {
         background: rgba(255, 255, 255, 0.95);
         backdrop-filter: blur(10px);
@@ -147,6 +181,22 @@
                 <div id="status-dot" class="w-2 h-2 rounded-full bg-gray-400 pulse-dot"></div>
                 <span id="status-text" class="text-sm font-medium text-gray-700">Conectando...</span>
               </div>
+              <!-- Sound Toggle Button -->
+              <button id="sound-toggle" onclick="toggleSound()" class="sound-toggle p-2 hover:bg-gray-100 rounded-lg transition" title="Ativar/Desativar alerta sonoro">
+                <svg id="sound-icon-on" class="w-5 h-5 text-gray-600 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"/>
+                </svg>
+                <svg id="sound-icon-off" class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"/>
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2"/>
+                </svg>
+              </button>
+              <!-- Expand to new window -->
+              <button onclick="window.open(window.location.href, '_blank', 'width=1200,height=800')" class="p-2 hover:bg-gray-100 rounded-lg transition" title="Abrir em nova janela">
+                <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
+                </svg>
+              </button>
               <button onclick="refreshChats()" class="p-2 hover:bg-gray-100 rounded-lg transition" title="Atualizar">
                 <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
@@ -162,8 +212,12 @@
 
           <!-- Row 2: Search Bar -->
           <div class="relative">
-            <input type="text" id="search-input" placeholder="🔍 Pesquisar mensagens, usuários ou grupos..."
-              class="w-full px-4 py-3 pl-4 rounded-xl border border-gray-200 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 outline-none transition text-sm">
+            <svg class="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+            </svg>
+            <input type="text" id="search-input" placeholder="Pesquisar mensagens, usuários ou grupos..."
+              class="w-full px-4 py-3 pl-12 rounded-xl border border-gray-200 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 outline-none transition text-sm bg-white/80">
+            <div id="search-results-count" class="absolute right-4 top-1/2 transform -translate-y-1/2 text-xs text-gray-400 hidden"></div>
           </div>
         </div>
       </header>
@@ -310,7 +364,9 @@
         selectedGroups: new Set(SELECTED_GROUPS),
         selectedMessages: new Map(), // messageId -> {groupId, who, text}
         searchQuery: '',
-        currentUser: null
+        currentUser: null,
+        soundEnabled: localStorage.getItem('soundEnabled') === 'true',
+        lastMessageTime: Date.now()
       };
 
       const el = {
@@ -325,14 +381,123 @@
         replyUser: document.getElementById('reply-user'),
         replyText: document.getElementById('reply-text'),
         replyGroups: document.getElementById('reply-groups'),
-        replyMessage: document.getElementById('reply-message')
+        replyMessage: document.getElementById('reply-message'),
+        soundToggle: document.getElementById('sound-toggle'),
+        soundIconOn: document.getElementById('sound-icon-on'),
+        soundIconOff: document.getElementById('sound-icon-off'),
+        searchResultsCount: document.getElementById('search-results-count')
       };
 
-      // Search handler
+      // ===== SOUND NOTIFICATION SYSTEM =====
+      // Create audio context for notification sound
+      let audioContext = null;
+
+      function createNotificationSound() {
+        try {
+          if (!audioContext) {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+          }
+
+          const oscillator = audioContext.createOscillator();
+          const gainNode = audioContext.createGain();
+
+          oscillator.connect(gainNode);
+          gainNode.connect(audioContext.destination);
+
+          // Pleasant notification tone
+          oscillator.frequency.setValueAtTime(880, audioContext.currentTime); // A5
+          oscillator.type = 'sine';
+
+          gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+          gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+
+          oscillator.start(audioContext.currentTime);
+          oscillator.stop(audioContext.currentTime + 0.3);
+
+          // Second beep
+          setTimeout(() => {
+            const osc2 = audioContext.createOscillator();
+            const gain2 = audioContext.createGain();
+            osc2.connect(gain2);
+            gain2.connect(audioContext.destination);
+            osc2.frequency.setValueAtTime(1100, audioContext.currentTime); // C#6
+            osc2.type = 'sine';
+            gain2.gain.setValueAtTime(0.2, audioContext.currentTime);
+            gain2.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+            osc2.start(audioContext.currentTime);
+            osc2.stop(audioContext.currentTime + 0.2);
+          }, 150);
+        } catch (e) {
+          console.log('Audio not supported:', e);
+        }
+      }
+
+      function playNotificationSound() {
+        if (state.soundEnabled) {
+          createNotificationSound();
+        }
+      }
+
+      function toggleSound() {
+        state.soundEnabled = !state.soundEnabled;
+        localStorage.setItem('soundEnabled', state.soundEnabled);
+        updateSoundUI();
+
+        if (state.soundEnabled) {
+          // Play test sound when enabling
+          playNotificationSound();
+          showToast('🔔 Alerta sonoro ativado', 'success');
+        } else {
+          showToast('🔕 Alerta sonoro desativado', 'info');
+        }
+      }
+
+      function updateSoundUI() {
+        if (state.soundEnabled) {
+          el.soundToggle.classList.add('active');
+          el.soundIconOn.classList.remove('hidden');
+          el.soundIconOff.classList.add('hidden');
+        } else {
+          el.soundToggle.classList.remove('active');
+          el.soundIconOn.classList.add('hidden');
+          el.soundIconOff.classList.remove('hidden');
+        }
+      }
+
+      // Initialize sound UI
+      updateSoundUI();
+
+      // Make toggleSound available globally
+      window.toggleSound = toggleSound;
+
+      // Search handler with result counter
+      let searchTimeout;
       el.searchInput.addEventListener('input', (e) => {
-        state.searchQuery = e.target.value.toLowerCase();
-        renderChats();
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => {
+          state.searchQuery = e.target.value.toLowerCase();
+          renderChats();
+          updateSearchResultsCount();
+        }, 200);
       });
+
+      function updateSearchResultsCount() {
+        if (!state.searchQuery) {
+          el.searchResultsCount.classList.add('hidden');
+          return;
+        }
+
+        let totalResults = 0;
+        state.chatByGroup.forEach((messages) => {
+          totalResults += messages.filter(msg =>
+            msg.text.toLowerCase().includes(state.searchQuery) ||
+            msg.who.toLowerCase().includes(state.searchQuery)
+          ).length;
+        });
+
+        el.searchResultsCount.textContent = `${totalResults} resultado${totalResults !== 1 ? 's' : ''}`;
+        el.searchResultsCount.classList.remove('hidden');
+      }
 
       // --- Socket Events ---
       socket.on('connect', () => {
@@ -367,6 +532,27 @@
         // Só mostra se não há filtro ou se grupo está selecionado
         if (state.selectedGroups.size === 0 || state.selectedGroups.has(groupId)) {
           pushChat(groupId, from, text, timestamp, messageId);
+
+          // Play notification sound for new messages from others
+          if (from !== 'Você') {
+            playNotificationSound();
+
+            // Flash the group card to indicate new message
+            setTimeout(() => {
+              const groupCards = document.querySelectorAll('.glass-dark');
+              groupCards.forEach(card => {
+                const header = card.querySelector('h3');
+                if (header) {
+                  const group = state.groups.find(g => g.id === groupId);
+                  const groupName = group?.subject || groupId.split('@')[0];
+                  if (header.textContent.includes(groupName) || header.innerHTML.includes(groupName)) {
+                    card.classList.add('new-message-indicator');
+                    setTimeout(() => card.classList.remove('new-message-indicator'), 500);
+                  }
+                }
+              });
+            }, 100);
+          }
         }
       });
 
