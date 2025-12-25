@@ -187,8 +187,43 @@
       const SESSION_ID = getSessionId();
       console.log('📱 Session ID:', SESSION_ID);
 
-      // Mostra sessionId
-      document.getElementById('session-display').textContent = SESSION_ID.substring(0, 15) + '...';
+      // Pega grupos selecionados da janela pai
+      function getSelectedGroupsFromOpener() {
+        try {
+          if (window.opener && window.opener.getSelectedGroups) {
+            const selected = window.opener.getSelectedGroups();
+            console.log('📋 Grupos selecionados da janela principal:', selected);
+            return selected || [];
+          }
+        } catch (e) {
+          console.log('⚠️ Não foi possível acessar janela principal:', e);
+        }
+        return [];
+      }
+
+      // Pega dados dos grupos da janela pai
+      function getGroupsDataFromOpener() {
+        try {
+          if (window.opener && window.opener.getGroupsData) {
+            return window.opener.getGroupsData() || [];
+          }
+        } catch (e) {
+          console.log('⚠️ Não foi possível acessar dados dos grupos:', e);
+        }
+        return [];
+      }
+
+      const SELECTED_GROUPS = getSelectedGroupsFromOpener();
+      const OPENER_GROUPS_DATA = getGroupsDataFromOpener();
+
+      // Mostra sessionId e info
+      const sessionDisplay = document.getElementById('session-display');
+      if (SELECTED_GROUPS.length > 0) {
+        sessionDisplay.textContent = `${SELECTED_GROUPS.length} grupos`;
+        sessionDisplay.title = `Monitorando ${SELECTED_GROUPS.length} grupos selecionados`;
+      } else {
+        sessionDisplay.textContent = SESSION_ID.substring(0, 15) + '...';
+      }
 
       const socket = io(window.BACKEND_URL, {
         query: { sessionId: SESSION_ID },
@@ -205,9 +240,9 @@
       }
 
       const state = {
-        groups: [],
+        groups: OPENER_GROUPS_DATA,
         chatByGroup: new Map(),
-        selectedGroups: new Set()
+        selectedGroups: new Set(SELECTED_GROUPS)
       };
 
       const el = {
@@ -246,11 +281,17 @@
       });
 
       socket.on('message', ({ groupId, from, text, timestamp, messageId }) => {
-        pushChat(groupId, from, text, timestamp, messageId);
+        // Só mostra se não há filtro ou se grupo está selecionado
+        if (state.selectedGroups.size === 0 || state.selectedGroups.has(groupId)) {
+          pushChat(groupId, from, text, timestamp, messageId);
+        }
       });
 
       socket.on('message_sent', ({ groupId, text, timestamp, messageId }) => {
-        pushChat(groupId, 'Você', text, timestamp, messageId);
+        // Só mostra se não há filtro ou se grupo está selecionado
+        if (state.selectedGroups.size === 0 || state.selectedGroups.has(groupId)) {
+          pushChat(groupId, 'Você', text, timestamp, messageId);
+        }
       });
 
       // --- Functions ---
@@ -274,16 +315,27 @@
       }
 
       async function loadSelectedGroupsHistory() {
-        // Carrega histórico de todos os grupos disponíveis
+        // Se tem grupos selecionados da janela principal, usa eles
+        if (state.selectedGroups.size > 0) {
+          console.log(`📂 Carregando histórico de ${state.selectedGroups.size} grupos selecionados`);
+          for (const groupId of state.selectedGroups) {
+            await loadGroupHistory(groupId);
+          }
+          renderChats();
+          return;
+        }
+
+        // Fallback: carrega primeiros 10 grupos
         try {
           const response = await fetch(apiUrl('/api/groups'));
           if (response.ok) {
             const groups = await response.json();
+            state.groups = groups;
 
-            // Carrega histórico dos primeiros 10 grupos
             for (const group of groups.slice(0, 10)) {
               await loadGroupHistory(group.id);
             }
+            renderChats();
           }
         } catch (error) {
           console.error('Erro ao carregar histórico:', error);
