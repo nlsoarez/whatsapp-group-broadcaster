@@ -129,6 +129,64 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // --- Toggle Sound Function for Main Page ---
+  function toggleMainSound() {
+    state.soundEnabled = !state.soundEnabled;
+    localStorage.setItem('mainAppSoundEnabled', state.soundEnabled);
+    updateMainSoundUI();
+
+    if (state.soundEnabled) {
+      playNotificationSound();
+      showToast('Alerta sonoro ativado', 'success');
+    } else {
+      showToast('Alerta sonoro desativado', 'info');
+    }
+  }
+
+  function updateMainSoundUI() {
+    const iconOn = document.getElementById('main-sound-icon-on');
+    const iconOff = document.getElementById('main-sound-icon-off');
+    const toggleBtn = document.getElementById('main-sound-toggle');
+
+    if (iconOn && iconOff && toggleBtn) {
+      if (state.soundEnabled) {
+        iconOn.classList.remove('hidden');
+        iconOff.classList.add('hidden');
+        toggleBtn.title = 'Alerta sonoro ativado (clique para desativar)';
+      } else {
+        iconOn.classList.add('hidden');
+        iconOff.classList.remove('hidden');
+        toggleBtn.title = 'Alerta sonoro desativado (clique para ativar)';
+      }
+    }
+  }
+
+  // Expose function globally
+  window.toggleMainSound = toggleMainSound;
+
+  // Initialize sound UI on load
+  setTimeout(updateMainSoundUI, 100);
+
+  // --- Monitoring Search ---
+  let monitoringSearchQuery = '';
+
+  function initMonitoringSearch() {
+    const searchInput = document.getElementById('monitoring-search');
+    if (searchInput) {
+      let searchTimeout;
+      searchInput.addEventListener('input', (e) => {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => {
+          monitoringSearchQuery = e.target.value.toLowerCase();
+          renderChats();
+        }, 200);
+      });
+    }
+  }
+
+  // Initialize search on page load
+  setTimeout(initMonitoringSearch, 500);
+
   // --- Helper para adicionar sessionId nas URLs ---
   function apiUrl(endpoint) {
     const separator = endpoint.includes('?') ? '&' : '?';
@@ -415,19 +473,38 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     selectedGroups.forEach(groupId => {
-      const messages = state.chatByGroup.get(groupId) || [];
+      const allMessages = state.chatByGroup.get(groupId) || [];
       const group = state.groups.find(g => g.id === groupId);
 
       if (!group) return;
 
+      // Filter messages based on search query
+      let messages = allMessages;
+      if (monitoringSearchQuery) {
+        messages = allMessages.filter(m =>
+          m.text.toLowerCase().includes(monitoringSearchQuery) ||
+          m.who.toLowerCase().includes(monitoringSearchQuery)
+        );
+        // Skip this group if no messages match search
+        if (messages.length === 0 && allMessages.length > 0) return;
+      }
+
       const chatCard = document.createElement('div');
       chatCard.className = 'glass-dark rounded-xl p-4';
+
+      // Highlight function for search matches
+      const highlightText = (text) => {
+        if (!monitoringSearchQuery) return escapeHtml(text);
+        const escaped = escapeHtml(text);
+        const regex = new RegExp(`(${monitoringSearchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+        return escaped.replace(regex, '<mark class="bg-yellow-200 px-0.5 rounded">$1</mark>');
+      };
 
       const header = `
         <div class="flex items-center justify-between mb-3 pb-2 border-b border-gray-200">
           <div class="flex items-center gap-2">
             <div class="w-2 h-2 bg-green-500 rounded-full"></div>
-            <h3 class="font-semibold text-gray-800">${escapeHtml(group.subject)}</h3>
+            <h3 class="font-semibold text-gray-800">${highlightText(group.subject)}</h3>
           </div>
           <span class="text-xs text-gray-500">${messages.length} mensagens</span>
         </div>
@@ -465,8 +542,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     ↩️ ${escapeHtml(m.replyText.substring(0, 50))}${m.replyText.length > 50 ? '...' : ''}
                   </div>
                 ` : ''}
-                ${!isMe ? `<p class="text-xs font-semibold text-purple-600 mb-1">${escapeHtml(m.who)}</p>` : ''}
-                <p class="text-sm break-words">${escapeHtml(m.text)}</p>
+                ${!isMe ? `<p class="text-xs font-semibold text-purple-600 mb-1">${highlightText(m.who)}</p>` : ''}
+                <p class="text-sm break-words">${highlightText(m.text)}</p>
                 <p class="text-xs ${isMe ? 'text-purple-100' : 'text-gray-400'} mt-1">${time}</p>
               </div>
             </div>
