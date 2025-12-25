@@ -163,15 +163,15 @@ class SessionManager {
         },
         logger: pino({ level: 'error' }),
         browser: Browsers.ubuntu('Chrome'),
-        connectTimeoutMs: 30000, // Reduzido de 60s para 30s
+        connectTimeoutMs: 30000,
         keepAliveIntervalMs: 25000,
         emitOwnEvents: true,
-        generateHighQualityLinkPreview: false, // Desabilitado para melhor performance
-        syncFullHistory: false, // Desabilitado para conexão mais rápida
+        generateHighQualityLinkPreview: false,
+        syncFullHistory: true, // Reabilitado para carregar histórico
         markOnlineOnConnect: true,
         defaultQueryTimeoutMs: 30000,
-        qrTimeout: 40000, // Timeout específico para QR
-        retryRequestDelayMs: 250, // Retry mais rápido
+        qrTimeout: 40000,
+        retryRequestDelayMs: 250,
         getMessage: async (key) => {
           const jid = key.remoteJid
           const messageList = session.store.messages[jid] || []
