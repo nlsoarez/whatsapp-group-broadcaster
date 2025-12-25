@@ -253,7 +253,10 @@ class SessionManager {
             if (c.id) {
               const name = c.name || c.notify || c.verifiedName
               if (name) {
+                // Armazena com ID completo e apenas número para facilitar matching
                 session.store.contacts[c.id] = name
+                const number = c.id.split('@')[0]
+                if (number) session.store.contacts[number] = name
               }
             }
           })
@@ -269,6 +272,8 @@ class SessionManager {
               const name = c.name || c.notify || c.verifiedName
               if (name) {
                 session.store.contacts[c.id] = name
+                const number = c.id.split('@')[0]
+                if (number) session.store.contacts[number] = name
               }
             }
           })
@@ -672,17 +677,35 @@ class SessionManager {
     if (!session) return []
 
     const messages = session.store.messages[groupId] || []
+    // Helper para buscar nome do contato com diferentes formatos de ID
+    const getContactName = (participantId) => {
+      if (!participantId || !session.store.contacts) return null
+
+      // Tenta com ID completo
+      let name = session.store.contacts[participantId]
+      if (name && !name.match(/^\d+$/)) return name
+
+      // Tenta apenas com número (sem @s.whatsapp.net)
+      const number = participantId.split('@')[0]
+      name = session.store.contacts[number]
+      if (name && !name.match(/^\d+$/)) return name
+
+      // Tenta com sufixo @s.whatsapp.net
+      name = session.store.contacts[`${number}@s.whatsapp.net`]
+      if (name && !name.match(/^\d+$/)) return name
+
+      return null
+    }
+
     return messages.map(m => {
       let senderName = m.pushName
 
       // Se pushName é um número ou não existe, tenta resolver do mapa de contatos
       if (!senderName || senderName.match(/^\d+$/)) {
         const participant = m.key?.participant || m.participant
-        if (participant && session.store.contacts) {
-          const contactName = session.store.contacts[participant]
-          if (contactName && !contactName.match(/^\d+$/)) {
-            senderName = contactName
-          }
+        const contactName = getContactName(participant)
+        if (contactName) {
+          senderName = contactName
         }
       }
 
