@@ -72,13 +72,61 @@ document.addEventListener('DOMContentLoaded', () => {
       delivered: 0,
       read: 0
     },
-    isLoadingHistory: new Set()
+    isLoadingHistory: new Set(),
+    soundEnabled: localStorage.getItem('mainAppSoundEnabled') === 'true'
   };
 
   // Exibe o Session ID na UI
   if (el.sessionIdDisplay) {
     el.sessionIdDisplay.textContent = SESSION_ID.substring(0, 15) + '...';
     el.sessionIdDisplay.title = SESSION_ID;
+  }
+
+  // --- Sound Notification System ---
+  let audioContext = null;
+
+  function createNotificationSound() {
+    try {
+      if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      }
+
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+
+      oscillator.frequency.setValueAtTime(880, audioContext.currentTime);
+      oscillator.type = 'sine';
+
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.3);
+
+      setTimeout(() => {
+        const osc2 = audioContext.createOscillator();
+        const gain2 = audioContext.createGain();
+        osc2.connect(gain2);
+        gain2.connect(audioContext.destination);
+        osc2.frequency.setValueAtTime(1100, audioContext.currentTime);
+        osc2.type = 'sine';
+        gain2.gain.setValueAtTime(0.2, audioContext.currentTime);
+        gain2.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+        osc2.start(audioContext.currentTime);
+        osc2.stop(audioContext.currentTime + 0.2);
+      }, 150);
+    } catch (e) {
+      console.log('Audio not supported:', e);
+    }
+  }
+
+  function playNotificationSound() {
+    if (state.soundEnabled) {
+      createNotificationSound();
+    }
   }
 
   // --- Helper para adicionar sessionId nas URLs ---
@@ -716,6 +764,20 @@ document.addEventListener('DOMContentLoaded', () => {
     showToast(`Erro: ${message}`, 'error');
   });
 
+  socket.on('qr_loading', () => {
+    console.log('⏳ QR Code carregando...');
+    setStatus('Gerando QR Code...', false);
+    el.qr.innerHTML = `
+      <div class="flex flex-col items-center justify-center h-full">
+        <div class="animate-spin h-12 w-12 border-4 border-purple-500 border-t-transparent rounded-full mb-3"></div>
+        <p class="text-sm text-gray-500">Gerando QR Code...</p>
+      </div>
+    `;
+    if (el.qrCard.classList.contains('hidden')) {
+      el.qrCard.classList.remove('hidden');
+    }
+  });
+
   socket.on('qr', ({ dataUrl }) => {
     console.log('📱 QR Code recebido');
     setQR(dataUrl);
@@ -723,6 +785,23 @@ document.addEventListener('DOMContentLoaded', () => {
     if (el.qrCard.classList.contains('hidden')) {
       el.qrCard.classList.remove('hidden');
     }
+  });
+
+  socket.on('qr_error', ({ message }) => {
+    console.error('❌ Erro no QR:', message);
+    setStatus('Erro ao gerar QR Code', false);
+    el.qr.innerHTML = `
+      <div class="flex flex-col items-center justify-center h-full text-red-500">
+        <svg class="w-12 h-12 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        <p class="text-sm">Erro ao gerar QR Code</p>
+        <button onclick="window.resetSessionFunction()" class="mt-2 px-4 py-2 bg-purple-500 text-white rounded-lg text-sm">
+          Tentar novamente
+        </button>
+      </div>
+    `;
+    showToast('Erro ao gerar QR Code', 'error');
   });
 
   socket.on('ready', async () => {
@@ -753,6 +832,11 @@ document.addEventListener('DOMContentLoaded', () => {
   socket.on('message', ({ groupId, from, text, timestamp, messageId }) => {
     if (state.selected.has(groupId)) {
       pushChat(groupId, from, text, timestamp, messageId);
+
+      // Play notification sound for new messages from others
+      if (from !== 'Você') {
+        playNotificationSound();
+      }
     }
   });
 

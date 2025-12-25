@@ -163,13 +163,15 @@ class SessionManager {
         },
         logger: pino({ level: 'error' }),
         browser: Browsers.ubuntu('Chrome'),
-        connectTimeoutMs: 60000,
-        keepAliveIntervalMs: 30000,
+        connectTimeoutMs: 30000, // Reduzido de 60s para 30s
+        keepAliveIntervalMs: 25000,
         emitOwnEvents: true,
-        generateHighQualityLinkPreview: true,
-        syncFullHistory: true,
+        generateHighQualityLinkPreview: false, // Desabilitado para melhor performance
+        syncFullHistory: false, // Desabilitado para conexão mais rápida
         markOnlineOnConnect: true,
-        defaultQueryTimeoutMs: undefined,
+        defaultQueryTimeoutMs: 30000,
+        qrTimeout: 40000, // Timeout específico para QR
+        retryRequestDelayMs: 250, // Retry mais rápido
         getMessage: async (key) => {
           const jid = key.remoteJid
           const messageList = session.store.messages[jid] || []
@@ -188,11 +190,31 @@ class SessionManager {
           session.qrRetries++
           console.log(`📱 QR Code para ${sessionId} (${session.qrRetries}/5)`)
 
+          // Emite evento de loading imediatamente
+          this.io.to(sessionId).emit('qr_loading')
+
           try {
-            const dataUrl = await qrcode.toDataURL(qr, { width: 300, margin: 2 })
+            // Gera QR code com configurações otimizadas
+            const dataUrl = await qrcode.toDataURL(qr, {
+              width: 256, // Menor que 300 para ser mais rápido
+              margin: 1,  // Margem reduzida
+              errorCorrectionLevel: 'M', // Medium em vez de High (padrão)
+              color: {
+                dark: '#000000',
+                light: '#FFFFFF'
+              }
+            })
             this.io.to(sessionId).emit('qr', { dataUrl })
+            console.log(`✅ QR Code enviado para ${sessionId}`)
           } catch (err) {
             console.error('Erro ao gerar QR:', err)
+            // Tenta novamente com configurações mais simples
+            try {
+              const simpleQr = await qrcode.toDataURL(qr)
+              this.io.to(sessionId).emit('qr', { dataUrl: simpleQr })
+            } catch (e) {
+              this.io.to(sessionId).emit('qr_error', { message: 'Erro ao gerar QR Code' })
+            }
           }
 
           if (session.qrRetries > 5) {
@@ -589,35 +611,82 @@ class SessionManager {
         // Lógica de reply inteligente
         if (replyInfo?.text) {
           const groupMessages = session.store.messages[gid] || []
+          console.log(`🔍 [${sessionId}] Buscando mensagem para reply em ${gid} (${groupMessages.length} mensagens no cache)`)
+          console.log(`🔍 Procurando texto: "${replyInfo.text?.substring(0, 50)}" de "${replyInfo.from}"`)
 
-          // Busca exata
+          // Busca exata por texto
           let originalMessage = groupMessages.find(m => {
-            const msgText = m.message?.conversation || m.message?.extendedTextMessage?.text
+            const msgText = m.message?.conversation || m.message?.extendedTextMessage?.text || ''
             return msgText === replyInfo.text
           })
 
-          // Busca por similaridade se não encontrar exata
+          // Busca por similaridade se não encontrar exata (texto começa igual)
           if (!originalMessage && replyInfo.text) {
             const normalized = replyInfo.text.toLowerCase().trim()
+            const searchLen = Math.min(normalized.length, 50)
+
             for (const msg of groupMessages) {
-              const msgText = msg.message?.conversation || msg.message?.extendedTextMessage?.text
-              if (msgText && msgText.toLowerCase().includes(normalized.substring(0, 30))) {
+              const msgText = (msg.message?.conversation || msg.message?.extendedTextMessage?.text || '').toLowerCase().trim()
+              // Verifica se o texto começa igual ou contém o início do texto buscado
+              if (msgText && (msgText.startsWith(normalized.substring(0, searchLen)) || msgText.includes(normalized.substring(0, 30)))) {
                 originalMessage = msg
+                console.log(`✅ Match por similaridade encontrado`)
                 break
               }
             }
           }
 
+          // Busca pelo remetente + texto parcial (mais flexível)
+          if (!originalMessage && replyInfo.from && replyInfo.text) {
+            const senderName = replyInfo.from.toLowerCase()
+            const textStart = replyInfo.text.toLowerCase().substring(0, 20)
+
+            for (const msg of groupMessages) {
+              const msgSender = (msg.pushName || '').toLowerCase()
+              const msgText = (msg.message?.conversation || msg.message?.extendedTextMessage?.text || '').toLowerCase()
+
+              // Match se o remetente é similar e o texto contém o início
+              if (msgSender.includes(senderName.substring(0, 10)) || senderName.includes(msgSender.substring(0, 10))) {
+                if (msgText.includes(textStart)) {
+                  originalMessage = msg
+                  console.log(`✅ Match por remetente + texto encontrado`)
+                  break
+                }
+              }
+            }
+          }
+
+          // Busca nos messagePatterns (índice de texto normalizado)
+          if (!originalMessage && session.store.messagePatterns) {
+            const normalizedSearch = replyInfo.text.toLowerCase().trim().replace(/\s+/g, ' ')
+            const patternMatch = session.store.messagePatterns[normalizedSearch]
+
+            if (patternMatch) {
+              const matchInGroup = patternMatch.find(p => p.groupId === gid)
+              if (matchInGroup) {
+                originalMessage = groupMessages.find(m => m.key?.id === matchInGroup.messageId)
+                console.log(`✅ Match por messagePatterns encontrado`)
+              }
+            }
+          }
+
           if (originalMessage) {
-            sentMessage = await session.sock.sendMessage(gid,
-              { text: message },
-              { quoted: originalMessage }
-            )
-            replyFound = true
+            try {
+              sentMessage = await session.sock.sendMessage(gid,
+                { text: message },
+                { quoted: originalMessage }
+              )
+              replyFound = true
+              console.log(`✅ Reply nativo enviado com sucesso para ${gid}`)
+            } catch (quoteError) {
+              console.log(`⚠️ Erro ao enviar reply nativo, usando fallback: ${quoteError.message}`)
+            }
+          } else {
+            console.log(`⚠️ Mensagem original não encontrada para reply em ${gid}`)
           }
         }
 
-        // Envia normal se não conseguiu reply
+        // Envia normal se não conseguiu reply nativo
         if (!sentMessage) {
           const finalMessage = replyInfo && !replyFound
             ? `↩️ @${replyInfo.from || 'usuário'}: "${replyInfo.text?.substring(0, 50)}..."\n\n${message}`
