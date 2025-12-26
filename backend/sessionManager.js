@@ -302,10 +302,22 @@ class SessionManager {
         }
       })
 
+      // Helper para formatar ID de usuário quando não tem nome
+      const formatUserId = (participantId) => {
+        if (!participantId) return 'Desconhecido'
+
+        const number = participantId.split('@')[0]
+        if (!number) return 'Desconhecido'
+
+        // Mostra formato amigável: "Usuário ~XXXX" (últimos 4 dígitos)
+        const lastDigits = number.slice(-4)
+        return `Usuário ~${lastDigits}`
+      }
+
       // Helper para resolver nome de contato
       const resolveContactName = (participantId, pushName) => {
-        // Primeiro tenta o pushName se não for um número puro
-        if (pushName && !pushName.match(/^\d{10,}$/)) {
+        // Primeiro tenta o pushName se não for um número puro (ID)
+        if (pushName && !pushName.match(/^\d{8,}$/)) {
           return pushName
         }
 
@@ -315,30 +327,20 @@ class SessionManager {
         if (session.store.contacts) {
           // ID completo
           let name = session.store.contacts[participantId]
-          if (name && !name.match(/^\d{10,}$/)) return name
+          if (name && !name.match(/^\d{8,}$/)) return name
 
           // Apenas número
           const number = participantId.split('@')[0]
           name = session.store.contacts[number]
-          if (name && !name.match(/^\d{10,}$/)) return name
+          if (name && !name.match(/^\d{8,}$/)) return name
 
           // Com sufixo @s.whatsapp.net
           name = session.store.contacts[`${number}@s.whatsapp.net`]
-          if (name && !name.match(/^\d{10,}$/)) return name
+          if (name && !name.match(/^\d{8,}$/)) return name
         }
 
-        // Formata número brasileiro
-        if (participantId) {
-          const number = participantId.split('@')[0]
-          if (number.length >= 12 && number.startsWith('55')) {
-            const formatted = number.replace(/^55(\d{2})(\d{5})(\d{4})$/, '($1) $2-$3')
-              .replace(/^55(\d{2})(\d{4})(\d{4})$/, '($1) $2-$3')
-            if (formatted !== number) return formatted
-          }
-          return number
-        }
-
-        return pushName || 'Desconhecido'
+        // Se não encontrou nome, mostra formato amigável do ID
+        return formatUserId(participantId)
       }
 
       // Handler de mensagens
@@ -775,10 +777,19 @@ class SessionManager {
 
     const messages = session.store.messages[groupId] || []
 
-    // Helper para buscar nome do contato com diferentes formatos de ID
+    // Helper para formatar ID de usuário quando não tem nome
+    const formatUserId = (participantId) => {
+      if (!participantId) return 'Desconhecido'
+      const number = participantId.split('@')[0]
+      if (!number) return 'Desconhecido'
+      const lastDigits = number.slice(-4)
+      return `Usuário ~${lastDigits}`
+    }
+
+    // Helper para buscar nome do contato
     const getContactName = (participantId, pushName) => {
-      // Primeiro tenta o pushName se não for um número puro
-      if (pushName && !pushName.match(/^\d{10,}$/)) {
+      // Primeiro tenta o pushName se não for um ID numérico
+      if (pushName && !pushName.match(/^\d{8,}$/)) {
         return pushName
       }
 
@@ -786,32 +797,19 @@ class SessionManager {
 
       // Tenta do mapa de contatos
       if (session.store.contacts) {
-        // ID completo
         let name = session.store.contacts[participantId]
-        if (name && !name.match(/^\d{10,}$/)) return name
+        if (name && !name.match(/^\d{8,}$/)) return name
 
-        // Apenas número
         const number = participantId.split('@')[0]
         name = session.store.contacts[number]
-        if (name && !name.match(/^\d{10,}$/)) return name
+        if (name && !name.match(/^\d{8,}$/)) return name
 
-        // Com sufixo @s.whatsapp.net
         name = session.store.contacts[`${number}@s.whatsapp.net`]
-        if (name && !name.match(/^\d{10,}$/)) return name
+        if (name && !name.match(/^\d{8,}$/)) return name
       }
 
-      // Formata número brasileiro
-      if (participantId) {
-        const number = participantId.split('@')[0]
-        if (number.length >= 12 && number.startsWith('55')) {
-          const formatted = number.replace(/^55(\d{2})(\d{5})(\d{4})$/, '($1) $2-$3')
-            .replace(/^55(\d{2})(\d{4})(\d{4})$/, '($1) $2-$3')
-          if (formatted !== number) return formatted
-        }
-        return number
-      }
-
-      return pushName || null
+      // Se não encontrou nome, mostra formato amigável do ID
+      return formatUserId(participantId)
     }
 
     return messages.map(m => {
@@ -824,7 +822,7 @@ class SessionManager {
         from: senderName || 'Desconhecido',
         fromMe: m.key?.fromMe,
         timestamp: new Date(m.messageTimestamp * 1000).toISOString(),
-        participant: participant // Inclui participant para referência
+        participant: participant
       }
     })
   }
