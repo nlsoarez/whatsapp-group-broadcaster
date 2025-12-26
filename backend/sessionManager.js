@@ -415,12 +415,19 @@ class SessionManager {
             if (!session.store.contacts) session.store.contacts = {}
             contacts.forEach(c => {
               if (c.id) {
-                session.store.contacts[c.id] = c.name || c.notify || c.verifiedName || c.id.split('@')[0]
+                const name = c.name || c.notify || c.verifiedName
+                if (name) {
+                  session.store.contacts[c.id] = name
+                  const number = c.id.split('@')[0]
+                  if (number) session.store.contacts[number] = name
+                }
               }
             })
+            console.log(`📇 [${sessionId}] Contatos do histórico: ${Object.keys(session.store.contacts).length}`)
           }
 
           if (messages && messages.length > 0) {
+            let processedCount = 0
             for (const msg of messages) {
               const from = msg.key?.remoteJid
               if (!from || from === 'status@broadcast') continue
@@ -441,13 +448,14 @@ class SessionManager {
                 message: msg.message,
                 messageTimestamp: msg.messageTimestamp,
                 pushName: senderName,
-                participant: participant // Armazena participant para busca posterior
+                participant: participant
               }
 
               // Evita duplicatas
               const exists = session.store.messages[from].some(m => m.key?.id === msg.key?.id)
               if (!exists) {
                 session.store.messages[from].push(msgData)
+                processedCount++
               }
             }
 
@@ -461,10 +469,10 @@ class SessionManager {
               }
             }
 
-            console.log(`✅ [${sessionId}] Histórico processado para ${Object.keys(session.store.messages).length} grupos`)
+            console.log(`✅ [${sessionId}] Histórico: ${processedCount} msgs processadas em ${Object.keys(session.store.messages).length} grupos`)
           }
         } catch (error) {
-          console.error(`Erro ao processar histórico para ${sessionId}:`, error)
+          console.error(`❌ [${sessionId}] Erro ao processar histórico:`, error)
         }
       })
 
