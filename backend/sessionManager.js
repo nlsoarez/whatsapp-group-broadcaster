@@ -187,7 +187,23 @@ class SessionManager {
 
         // Só mostra QR se realmente precisar (não está conectado)
         if (qr && !session.ready) {
+          // Throttle: evita gerar QR muito rápido (mínimo 3 segundos entre cada)
+          const now = Date.now()
+          if (session.lastQrTime && (now - session.lastQrTime) < 3000) {
+            console.log(`⏳ QR Code ignorado (throttle) para ${sessionId}`)
+            return
+          }
+
+          // Evita QR duplicado
+          if (session.lastQr === qr) {
+            console.log(`⏳ QR Code duplicado ignorado para ${sessionId}`)
+            return
+          }
+
+          session.lastQr = qr
+          session.lastQrTime = now
           session.qrRetries++
+
           console.log(`📱 QR Code para ${sessionId} (${session.qrRetries}/5)`)
 
           // Emite evento de loading imediatamente
@@ -196,9 +212,9 @@ class SessionManager {
           try {
             // Gera QR code com configurações otimizadas
             const dataUrl = await qrcode.toDataURL(qr, {
-              width: 256, // Menor que 300 para ser mais rápido
-              margin: 1,  // Margem reduzida
-              errorCorrectionLevel: 'M', // Medium em vez de High (padrão)
+              width: 256,
+              margin: 1,
+              errorCorrectionLevel: 'M',
               color: {
                 dark: '#000000',
                 light: '#FFFFFF'
@@ -208,7 +224,6 @@ class SessionManager {
             console.log(`✅ QR Code enviado para ${sessionId}`)
           } catch (err) {
             console.error('Erro ao gerar QR:', err)
-            // Tenta novamente com configurações mais simples
             try {
               const simpleQr = await qrcode.toDataURL(qr)
               this.io.to(sessionId).emit('qr', { dataUrl: simpleQr })
@@ -219,7 +234,9 @@ class SessionManager {
 
           if (session.qrRetries > 5) {
             console.log(`⚠️ Muitas tentativas para ${sessionId}, reiniciando...`)
-            setTimeout(() => this.startSession(sessionId, true), 3000)
+            session.lastQr = null
+            session.lastQrTime = null
+            setTimeout(() => this.startSession(sessionId, true), 5000)
           }
         }
 
@@ -228,6 +245,8 @@ class SessionManager {
           if (!session.ready) {
             session.ready = true
             session.qrRetries = 0
+            session.lastQr = null
+            session.lastQrTime = null
             this.io.to(sessionId).emit('ready')
             console.log(`✅ Sessão ${sessionId} conectada!`)
           }
