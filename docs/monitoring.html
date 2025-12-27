@@ -537,17 +537,26 @@
           if (from !== 'Você') {
             playNotificationSound();
 
+            // Get group name for notification
+            const group = state.groups.find(g => g.id === groupId);
+            const groupName = group?.subject || groupId.split('@')[0];
+
+            // Show toast notification with group name and sender
+            showToast(`📩 ${groupName}: ${from}`, 'info');
+
             // Flash the group card to indicate new message
             setTimeout(() => {
               const groupCards = document.querySelectorAll('.glass-dark');
               groupCards.forEach(card => {
                 const header = card.querySelector('h3');
                 if (header) {
-                  const group = state.groups.find(g => g.id === groupId);
-                  const groupName = group?.subject || groupId.split('@')[0];
                   if (header.textContent.includes(groupName) || header.innerHTML.includes(groupName)) {
                     card.classList.add('new-message-indicator');
-                    setTimeout(() => card.classList.remove('new-message-indicator'), 500);
+                    card.style.border = '2px solid #10b981';
+                    setTimeout(() => {
+                      card.classList.remove('new-message-indicator');
+                      card.style.border = '';
+                    }, 3000);
                   }
                 }
               });

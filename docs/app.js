@@ -73,7 +73,8 @@ document.addEventListener('DOMContentLoaded', () => {
       read: 0
     },
     isLoadingHistory: new Set(),
-    soundEnabled: localStorage.getItem('mainAppSoundEnabled') === 'true'
+    soundEnabled: localStorage.getItem('mainAppSoundEnabled') === 'true',
+    favorites: JSON.parse(localStorage.getItem('whatsapp_favorites') || '[]')
   };
 
   // Exibe o Session ID na UI
@@ -956,6 +957,13 @@ document.addEventListener('DOMContentLoaded', () => {
       // Play notification sound for new messages from others
       if (from !== 'Você') {
         playNotificationSound();
+
+        // Get group name for notification
+        const group = state.groups.find(g => g.id === groupId);
+        const groupName = group?.subject || groupId.split('@')[0];
+
+        // Show toast notification with group name and sender
+        showToast(`📩 ${groupName}: ${from}`, 'info');
       }
     }
   });
@@ -1024,6 +1032,200 @@ document.addEventListener('DOMContentLoaded', () => {
   window.getSelectedGroups = () => Array.from(state.selected);
 
   window.getGroupsData = () => state.groups;
+
+  // --- Favorites System ---
+  function saveFavoritesToStorage() {
+    localStorage.setItem('whatsapp_favorites', JSON.stringify(state.favorites));
+  }
+
+  function renderFavoritesList() {
+    const container = document.getElementById('favorites-list');
+    if (!container) return;
+
+    if (state.favorites.length === 0) {
+      container.innerHTML = '<p class="text-xs text-gray-400 text-center py-2">Nenhum favorito salvo</p>';
+      return;
+    }
+
+    container.innerHTML = state.favorites.map((fav, index) => `
+      <button
+        onclick="loadFavorite(${index})"
+        class="w-full flex items-center justify-between p-2 bg-white hover:bg-yellow-50 rounded-lg border border-gray-100 hover:border-yellow-200 transition group"
+      >
+        <div class="flex items-center gap-2">
+          <svg class="w-4 h-4 text-yellow-500" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/>
+          </svg>
+          <span class="text-sm font-medium text-gray-700">${escapeHtml(fav.name)}</span>
+        </div>
+        <span class="text-xs text-gray-400">${fav.groupIds.length} grupos</span>
+      </button>
+    `).join('');
+  }
+
+  function loadFavorite(index) {
+    const favorite = state.favorites[index];
+    if (!favorite) return;
+
+    // Clear current selection
+    state.selected.clear();
+
+    // Add favorite groups to selection
+    let loadedCount = 0;
+    favorite.groupIds.forEach(groupId => {
+      const groupExists = state.groups.find(g => g.id === groupId);
+      if (groupExists) {
+        state.selected.add(groupId);
+        loadedCount++;
+        loadGroupHistory(groupId);
+      }
+    });
+
+    renderGroups();
+    renderChats();
+    updateUI();
+
+    showToast(`"${favorite.name}" carregado (${loadedCount} grupos)`, 'success');
+  }
+
+  window.saveFavorite = function() {
+    if (state.selected.size === 0) {
+      showToast('Selecione grupos primeiro', 'warning');
+      return;
+    }
+
+    // Show modal
+    const modal = document.getElementById('save-favorite-modal');
+    const countEl = document.getElementById('favorite-groups-count');
+    const previewEl = document.getElementById('favorite-groups-preview');
+    const inputEl = document.getElementById('favorite-name-input');
+
+    if (modal && countEl && previewEl && inputEl) {
+      countEl.textContent = state.selected.size;
+
+      // Show group names
+      const groupNames = Array.from(state.selected).map(id => {
+        const group = state.groups.find(g => g.id === id);
+        return group?.subject || id.split('@')[0];
+      });
+      previewEl.innerHTML = groupNames.map(n => `<span class="inline-block bg-gray-100 rounded px-2 py-0.5 mr-1 mb-1">${escapeHtml(n)}</span>`).join('');
+
+      inputEl.value = '';
+      modal.classList.remove('hidden');
+      inputEl.focus();
+    }
+  };
+
+  window.closeSaveFavoriteModal = function() {
+    const modal = document.getElementById('save-favorite-modal');
+    if (modal) modal.classList.add('hidden');
+  };
+
+  window.confirmSaveFavorite = function() {
+    const inputEl = document.getElementById('favorite-name-input');
+    const name = inputEl?.value.trim();
+
+    if (!name) {
+      showToast('Digite um nome para o favorito', 'error');
+      return;
+    }
+
+    const newFavorite = {
+      id: Date.now(),
+      name: name,
+      groupIds: Array.from(state.selected),
+      createdAt: new Date().toISOString()
+    };
+
+    state.favorites.push(newFavorite);
+    saveFavoritesToStorage();
+    renderFavoritesList();
+
+    closeSaveFavoriteModal();
+    showToast(`Favorito "${name}" salvo com sucesso!`, 'success');
+  };
+
+  window.manageFavorites = function() {
+    const modal = document.getElementById('manage-favorites-modal');
+    const listEl = document.getElementById('manage-favorites-list');
+
+    if (!modal || !listEl) return;
+
+    if (state.favorites.length === 0) {
+      listEl.innerHTML = '<p class="text-sm text-gray-500 text-center py-4">Nenhum favorito salvo</p>';
+    } else {
+      listEl.innerHTML = state.favorites.map((fav, index) => {
+        const groupNames = fav.groupIds.map(id => {
+          const group = state.groups.find(g => g.id === id);
+          return group?.subject || id.split('@')[0];
+        });
+
+        return `
+          <div class="p-4 bg-gray-50 rounded-xl border border-gray-100">
+            <div class="flex items-center justify-between mb-2">
+              <div class="flex items-center gap-2">
+                <svg class="w-5 h-5 text-yellow-500" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/>
+                </svg>
+                <span class="font-semibold text-gray-800">${escapeHtml(fav.name)}</span>
+              </div>
+              <div class="flex items-center gap-1">
+                <button onclick="loadFavoriteFromModal(${index})" class="p-2 hover:bg-green-100 rounded-lg transition" title="Carregar">
+                  <svg class="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                  </svg>
+                </button>
+                <button onclick="deleteFavorite(${index})" class="p-2 hover:bg-red-100 rounded-lg transition" title="Excluir">
+                  <svg class="w-4 h-4 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <p class="text-xs text-gray-500 mb-2">${fav.groupIds.length} grupos</p>
+            <div class="text-xs text-gray-400 max-h-20 overflow-y-auto">
+              ${groupNames.map(n => `<span class="inline-block bg-white rounded px-2 py-0.5 mr-1 mb-1 border border-gray-200">${escapeHtml(n)}</span>`).join('')}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    modal.classList.remove('hidden');
+  };
+
+  window.closeManageFavoritesModal = function() {
+    const modal = document.getElementById('manage-favorites-modal');
+    if (modal) modal.classList.add('hidden');
+  };
+
+  window.loadFavoriteFromModal = function(index) {
+    loadFavorite(index);
+    closeManageFavoritesModal();
+  };
+
+  window.deleteFavorite = function(index) {
+    const favorite = state.favorites[index];
+    if (!favorite) return;
+
+    if (!confirm(`Excluir o favorito "${favorite.name}"?`)) return;
+
+    state.favorites.splice(index, 1);
+    saveFavoritesToStorage();
+    renderFavoritesList();
+
+    // Refresh the manage modal
+    manageFavorites();
+
+    showToast(`Favorito "${favorite.name}" excluído`, 'success');
+  };
+
+  window.loadFavorite = loadFavorite;
+
+  // Initialize favorites on load
+  setTimeout(() => {
+    renderFavoritesList();
+  }, 500);
 
   // --- Utilities ---
   function escapeHtml(text) {
