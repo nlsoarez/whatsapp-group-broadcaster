@@ -74,7 +74,9 @@ document.addEventListener('DOMContentLoaded', () => {
     },
     isLoadingHistory: new Set(),
     soundEnabled: localStorage.getItem('mainAppSoundEnabled') === 'true',
-    favorites: JSON.parse(localStorage.getItem('whatsapp_favorites') || '[]')
+    favorites: JSON.parse(localStorage.getItem('whatsapp_favorites') || '[]'),
+    isWaitingForQR: false,  // Track if waiting for QR scan
+    isConnected: false       // Track connection state
   };
 
   // Exibe o Session ID na UI
@@ -904,6 +906,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   socket.on('qr', ({ dataUrl }) => {
     console.log('📱 QR Code recebido');
+    state.isWaitingForQR = true;
+    state.isConnected = false;
     setQR(dataUrl);
     setStatus('Aguardando escaneamento', false);
     if (el.qrCard.classList.contains('hidden')) {
@@ -930,6 +934,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   socket.on('ready', async () => {
     console.log('✅ WhatsApp conectado');
+    state.isWaitingForQR = false;
+    state.isConnected = true;
     setStatus('Conectado', true);
     el.qrCard.classList.add('hidden');
 
@@ -948,6 +954,8 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   socket.on('disconnected', () => {
+    state.isWaitingForQR = false;
+    state.isConnected = false;
     setStatus('Desconectado', false);
     el.qrCard.classList.remove('hidden');
     showToast('WhatsApp desconectado', 'warning');
@@ -967,6 +975,30 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Show toast notification with group name and sender
         showToast(`📩 ${groupName}: ${from}`, 'info');
+
+        // Highlight and scroll to the group card that received the message
+        setTimeout(() => {
+          const chatCards = el.chats.querySelectorAll('.glass-dark');
+          chatCards.forEach(card => {
+            const header = card.querySelector('h3');
+            if (header && (header.textContent.includes(groupName) || header.innerHTML.includes(groupName))) {
+              // Add highlight effect
+              card.style.border = '2px solid #10b981';
+              card.style.boxShadow = '0 0 20px rgba(16, 185, 129, 0.3)';
+              card.classList.add('new-message-highlight');
+
+              // Scroll the monitoring section to show this card
+              card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+              // Remove highlight after 3 seconds
+              setTimeout(() => {
+                card.style.border = '';
+                card.style.boxShadow = '';
+                card.classList.remove('new-message-highlight');
+              }, 3000);
+            }
+          });
+        }, 100);
       }
     }
   });
@@ -979,10 +1011,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
   socket.on('status', ({ ready }) => {
     if (ready) {
+      state.isWaitingForQR = false;
+      state.isConnected = true;
       setStatus('Conectado', true);
       el.qrCard.classList.add('hidden');
     } else {
-      setStatus('Aguardando conexão', false);
+      // Don't override "Aguardando escaneamento" if QR is showing
+      if (!state.isWaitingForQR) {
+        setStatus('Aguardando conexão', false);
+      }
     }
   });
 
