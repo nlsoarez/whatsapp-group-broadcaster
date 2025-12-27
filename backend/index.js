@@ -206,16 +206,21 @@ app.get('/api/group-picture/:jid', validateSession, async (req, res) => {
 // ---------------------------
 // REST: Logout e Reset
 // ---------------------------
-app.post('/api/logout', validateSession, async (req, res) => {
+app.post('/api/logout', optionalSession, async (req, res) => {
   try {
     console.log(`🚪 [${req.sessionId}] Logout solicitado`)
+
+    // Se a sessão não está conectada, apenas retorna sucesso
+    if (!req.session.ready && !req.session.sock) {
+      return res.json({ success: true, message: 'Sessão não estava conectada' })
+    }
 
     const success = await sessionManager.logoutSession(req.sessionId)
 
     if (success) {
       res.json({ success: true, message: 'Logout realizado' })
     } else {
-      res.status(500).json({ error: 'Falha no logout' })
+      res.json({ success: true, message: 'Sessão já estava desconectada' })
     }
   } catch (error) {
     console.error('Erro no logout:', error)
@@ -223,11 +228,17 @@ app.post('/api/logout', validateSession, async (req, res) => {
   }
 })
 
-app.post('/api/reset-session', validateSession, async (req, res) => {
+app.post('/api/reset-session', optionalSession, async (req, res) => {
   try {
     console.log(`🔄 [${req.sessionId}] Reset solicitado`)
 
-    await sessionManager.logoutSession(req.sessionId)
+    // Tenta fazer logout se existir conexão
+    if (req.session.sock) {
+      await sessionManager.logoutSession(req.sessionId)
+    }
+
+    // Reinicia a sessão
+    await sessionManager.startSession(req.sessionId, true)
 
     res.json({ success: true, message: 'Sessão resetada' })
   } catch (error) {

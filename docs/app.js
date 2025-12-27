@@ -746,26 +746,36 @@ document.addEventListener('DOMContentLoaded', () => {
 
         showToast('Logout realizado! Aguarde novo QR Code...', 'success');
       } else {
-        throw new Error('Falha ao fazer logout');
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || 'Falha ao fazer logout');
       }
     } catch (error) {
-      showToast(`Erro: ${error.message}`, 'error');
+      // Handle network errors more gracefully
+      if (error.message === 'Failed to fetch') {
+        showToast('Erro de conexão: Verifique se o servidor está online', 'error');
+      } else {
+        showToast(`Erro: ${error.message}`, 'error');
+      }
     } finally {
       el.logoutBtn.disabled = false;
       el.logoutBtn.innerHTML = `
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
         </svg>
-        <span>Logout</span>
+        <span>Sair</span>
       `;
     }
   }
 
   async function resetSession() {
-    if (!confirm('Isso desconectará a sessão atual. Continuar?')) return;
-
     el.resetBtn.disabled = true;
-    el.resetBtn.innerHTML = '<span class="animate-pulse">Resetando...</span>';
+    el.resetBtn.innerHTML = '<span class="animate-pulse">Gerando QR...</span>';
+    el.qr.innerHTML = `
+      <div class="flex flex-col items-center justify-center h-full">
+        <div class="animate-spin h-12 w-12 border-4 border-purple-500 border-t-transparent rounded-full mb-3"></div>
+        <p class="text-sm text-gray-500">Conectando ao servidor...</p>
+      </div>
+    `;
 
     try {
       const response = await fetch(apiUrl('/api/reset-session'), {
@@ -775,17 +785,31 @@ document.addEventListener('DOMContentLoaded', () => {
       });
 
       if (response.ok) {
-        showToast('Sessão resetada! Aguarde novo QR...', 'success');
-        el.qr.innerHTML = '<div class="loading-skeleton w-full h-full rounded-lg"></div>';
+        showToast('Aguarde o QR Code...', 'success');
       } else {
-        throw new Error('Falha ao resetar');
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || 'Falha ao resetar');
       }
     } catch (error) {
-      showToast(`Erro: ${error.message}`, 'error');
+      // Handle network errors more gracefully
+      if (error.message === 'Failed to fetch') {
+        showToast('Erro de conexão: Servidor não acessível', 'error');
+        el.qr.innerHTML = `
+          <div class="flex flex-col items-center justify-center h-full text-red-500">
+            <svg class="w-12 h-12 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            <p class="text-sm font-medium">Servidor não acessível</p>
+            <p class="text-xs text-gray-500 mt-1">Verifique sua conexão</p>
+          </div>
+        `;
+      } else {
+        showToast(`Erro: ${error.message}`, 'error');
+      }
     } finally {
       el.resetBtn.disabled = false;
       el.resetBtn.innerHTML = `
-        <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
         </svg>
         Gerar Novo QR Code
@@ -829,6 +853,25 @@ document.addEventListener('DOMContentLoaded', () => {
   socket.on('connect', () => {
     console.log('✅ Conectado ao servidor');
     showToast('Conectado ao servidor', 'success');
+    // Remove any connection error state
+    el.qr.classList.remove('connection-error');
+  });
+
+  socket.on('connect_error', (error) => {
+    console.error('❌ Erro de conexão:', error.message);
+    setStatus('Servidor inacessível', false);
+
+    // Show connection error in QR area
+    el.qr.innerHTML = `
+      <div class="flex flex-col items-center justify-center h-full text-red-500">
+        <svg class="w-12 h-12 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        <p class="text-sm font-medium">Servidor não acessível</p>
+        <p class="text-xs text-gray-500 mt-1 text-center px-4">Verifique se o backend está rodando<br/>ou sua conexão de rede</p>
+      </div>
+    `;
+    el.qr.classList.add('connection-error');
   });
 
   socket.on('disconnect', () => {
