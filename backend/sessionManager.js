@@ -571,19 +571,37 @@ class SessionManager {
   // Faz logout de uma sessão
   async logoutSession(sessionId) {
     const session = this.sessions.get(sessionId)
-    if (!session) return false
+    if (!session) {
+      // Cria sessão e inicia para novos usuários
+      this.getOrCreateSession(sessionId)
+      setTimeout(() => this.startSession(sessionId, true), 500)
+      return true
+    }
 
     try {
       console.log(`🚪 Logout da sessão ${sessionId}...`)
 
-      if (session.sock && session.ready) {
-        await session.sock.logout()
+      // Fecha socket existente, mesmo se não estava ready
+      if (session.sock) {
+        try {
+          if (session.ready) {
+            await session.sock.logout()
+          } else {
+            // Se não estava ready, apenas fecha a conexão
+            session.sock.end()
+          }
+        } catch (e) {
+          console.log(`⚠️ Erro ao fechar socket ${sessionId}:`, e.message)
+        }
       }
 
       await this.clearSessionAuth(sessionId)
 
       session.ready = false
       session.sock = null
+      session.lastQr = null
+      session.lastQrTime = null
+      session.qrRetries = 0
       session.store = { messages: {}, sentMessages: {}, messagePatterns: {} }
 
       this.io.to(sessionId).emit('disconnected')
@@ -594,6 +612,8 @@ class SessionManager {
       return true
     } catch (error) {
       console.error(`Erro no logout de ${sessionId}:`, error)
+      // Mesmo com erro, tenta reiniciar
+      setTimeout(() => this.startSession(sessionId, true), 2000)
       return false
     }
   }

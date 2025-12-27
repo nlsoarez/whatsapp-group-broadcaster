@@ -232,15 +232,10 @@ app.post('/api/reset-session', optionalSession, async (req, res) => {
   try {
     console.log(`🔄 [${req.sessionId}] Reset solicitado`)
 
-    // Tenta fazer logout se existir conexão
-    if (req.session.sock) {
-      await sessionManager.logoutSession(req.sessionId)
-    }
+    // logoutSession já chama startSession automaticamente após logout
+    await sessionManager.logoutSession(req.sessionId)
 
-    // Reinicia a sessão
-    await sessionManager.startSession(req.sessionId, true)
-
-    res.json({ success: true, message: 'Sessão resetada' })
+    res.json({ success: true, message: 'Sessão resetada, aguarde o QR Code' })
   } catch (error) {
     console.error('Erro no reset:', error)
     res.status(500).json({ error: error.message })
