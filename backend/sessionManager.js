@@ -249,6 +249,35 @@ class SessionManager {
             session.lastQrTime = null
             this.io.to(sessionId).emit('ready')
             console.log(`✅ Sessão ${sessionId} conectada!`)
+
+            // Busca participantes dos grupos automaticamente para resolver nomes
+            setTimeout(async () => {
+              try {
+                const groups = await sock.groupFetchAllParticipating()
+                if (!session.store.contacts) session.store.contacts = {}
+
+                let contactsAdded = 0
+                for (const group of Object.values(groups)) {
+                  if (group.participants) {
+                    for (const p of group.participants) {
+                      const name = p.name || p.notify || p.verifiedName
+                      if (name && p.id && !name.match(/^\d{8,}$/)) {
+                        const existing = session.store.contacts[p.id]
+                        if (!existing || existing.match(/^\d{8,}$/)) {
+                          session.store.contacts[p.id] = name
+                          const number = p.id.split('@')[0]
+                          if (number) session.store.contacts[number] = name
+                          contactsAdded++
+                        }
+                      }
+                    }
+                  }
+                }
+                console.log(`📇 [${sessionId}] ${contactsAdded} contatos carregados dos grupos`)
+              } catch (err) {
+                console.log(`⚠️ [${sessionId}] Erro ao buscar participantes:`, err.message)
+              }
+            }, 2000)
           }
         } else if (connection === 'close') {
           const statusCode = lastDisconnect?.error?.output?.statusCode
@@ -377,7 +406,17 @@ class SessionManager {
 
             // Resolve nome do remetente usando helper
             const participant = msg.key.participant || msg.participant
-            const senderName = resolveContactName(participant, msg.pushName || msg.verifiedBizName)
+            const rawPushName = msg.pushName || msg.verifiedBizName
+
+            // IMPORTANTE: Salva o pushName no mapa de contatos para uso futuro
+            if (rawPushName && participant && !rawPushName.match(/^\d{8,}$/)) {
+              if (!session.store.contacts) session.store.contacts = {}
+              session.store.contacts[participant] = rawPushName
+              const number = participant.split('@')[0]
+              if (number) session.store.contacts[number] = rawPushName
+            }
+
+            const senderName = resolveContactName(participant, rawPushName)
 
             const msgData = {
               key: msg.key,
@@ -460,7 +499,16 @@ class SessionManager {
 
               // Resolve nome do remetente usando helper
               const participant = msg.key?.participant || msg.participant
-              const senderName = resolveContactName(participant, msg.pushName || msg.verifiedBizName)
+              const rawPushName = msg.pushName || msg.verifiedBizName
+
+              // Salva o pushName no mapa de contatos para uso futuro
+              if (rawPushName && participant && !rawPushName.match(/^\d{8,}$/)) {
+                session.store.contacts[participant] = rawPushName
+                const number = participant.split('@')[0]
+                if (number) session.store.contacts[number] = rawPushName
+              }
+
+              const senderName = resolveContactName(participant, rawPushName)
 
               const msgData = {
                 key: msg.key,
