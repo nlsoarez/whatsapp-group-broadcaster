@@ -956,6 +956,13 @@ document.addEventListener('DOMContentLoaded', () => {
       // Play notification sound for new messages from others
       if (from !== 'Você') {
         playNotificationSound();
+
+        // Get group name for notification
+        const group = state.groups.find(g => g.id === groupId);
+        const groupName = group?.subject || groupId.split('@')[0];
+
+        // Show toast notification with group name and sender
+        showToast(`📩 ${groupName}: ${from}`, 'info');
       }
     }
   });
