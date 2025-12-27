@@ -581,10 +581,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
       el.chats.appendChild(chatCard);
 
-      const scrollContainer = chatCard.querySelector('.overflow-y-auto');
-      if (scrollContainer) {
-        scrollContainer.scrollTop = scrollContainer.scrollHeight;
-      }
+      // Auto-scroll to bottom after DOM updates
+      setTimeout(() => {
+        const scrollContainer = chatCard.querySelector('.overflow-y-auto');
+        if (scrollContainer) {
+          scrollContainer.scrollTop = scrollContainer.scrollHeight;
+        }
+      }, 50);
     });
   }
 
