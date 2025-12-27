@@ -768,11 +768,13 @@
 
           el.chats.appendChild(chatCard);
 
-          // Auto scroll
-          const scrollContainer = chatCard.querySelector('.overflow-y-auto');
-          if (scrollContainer) {
-            scrollContainer.scrollTop = scrollContainer.scrollHeight;
-          }
+          // Auto scroll after DOM updates
+          setTimeout(() => {
+            const scrollContainer = chatCard.querySelector('.overflow-y-auto');
+            if (scrollContainer) {
+              scrollContainer.scrollTop = scrollContainer.scrollHeight;
+            }
+          }, 50);
         });
 
         if (!hasResults && query) {

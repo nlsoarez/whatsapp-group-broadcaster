@@ -183,6 +183,17 @@
       .badge-count {
         background: linear-gradient(135deg, #DA291C 0%, #B71C1C 100%);
       }
+
+      /* New message highlight animation */
+      .new-message-highlight {
+        animation: pulseHighlight 0.5s ease-out;
+      }
+
+      @keyframes pulseHighlight {
+        0% { transform: scale(1); }
+        50% { transform: scale(1.02); }
+        100% { transform: scale(1); }
+      }
     </style>
   </head>
 
